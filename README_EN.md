@@ -245,6 +245,7 @@ Thanks to the original author for the creativity and open-source spirit! 🙏
 
 This project is licensed under **Creative Commons Attribution-NonCommercial-ShareAlike 4.0**.
 - ✅ Free to learn, modify, and share
+- ✅ Please credit the original author when using or modifying
 - ❌ Commercial use prohibited
 
 ---
