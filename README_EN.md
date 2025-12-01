@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6-green?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
 *Silent Background Recording → AI Analysis → Visual Timeline*
@@ -241,7 +241,11 @@ Thanks to the original author for the creativity and open-source spirit! 🙏
 
 ## 📄 License
 
-[MIT License](LICENSE) © 2024-2025
+[CC BY-NC-SA 4.0](LICENSE) © 2024-2025
+
+This project is licensed under **Creative Commons Attribution-NonCommercial-ShareAlike 4.0**.
+- ✅ Free to learn, modify, and share
+- ❌ Commercial use prohibited
 
 ---
 

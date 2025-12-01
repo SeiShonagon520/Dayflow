@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6-green?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
 *后台静默录屏 → AI 智能分析 → 可视化时间轴*
@@ -241,7 +241,11 @@ Dayflow/
 
 ## 📄 许可证
 
-[MIT License](LICENSE) © 2024-2025
+[CC BY-NC-SA 4.0](LICENSE) © 2024-2025
+
+本项目采用 **知识共享 署名-非商业性使用-相同方式共享 4.0** 协议。
+- ✅ 可自由学习、修改、分享
+- ❌ 禁止商业使用
 
 ---
 
