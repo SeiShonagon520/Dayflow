@@ -60,6 +60,8 @@
 | 📊 **时间分布图** | 直观的柱状图展示各类别时间占比 |
 | 🎨 **主题切换** | IDE 风格暗色/亮色主题，自动保存偏好 |
 | 🔽 **最小化托盘** | 关闭窗口最小化到系统托盘，后台继续运行 |
+| 📦 **EXE 打包** | 支持打包为独立可执行文件，无需 Python 环境 |
+| ⭐ **GitHub 链接** | 侧边栏一键跳转项目主页 |
 
 ---
 
@@ -190,6 +192,8 @@ Dayflow/
 ├── 📄 main.py              # 启动入口
 ├── ⚙️ config.py            # 配置文件
 ├── 📦 requirements.txt     # 依赖清单
+├── 🔨 build.py             # EXE 打包脚本
+├── 🔨 build.bat            # 一键打包批处理
 │
 ├── 🧠 core/                # 核心逻辑
 │   ├── types.py            # 数据模型
@@ -201,9 +205,13 @@ Dayflow/
 │   ├── schema.sql          # 表结构定义
 │   └── storage.py          # SQLite 管理
 │
-└── 🎨 ui/                  # 界面层
-    ├── main_window.py      # 主窗口
-    └── timeline_view.py    # 时间轴组件
+├── 🎨 ui/                  # 界面层
+│   ├── main_window.py      # 主窗口
+│   ├── timeline_view.py    # 时间轴组件
+│   └── themes.py           # 主题管理
+│
+└── 🖼️ assets/              # 资源文件
+    └── icon.ico            # 应用图标
 ```
 
 ---

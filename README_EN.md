@@ -60,6 +60,8 @@
 | 📊 **Time Distribution** | Visual bar chart showing time allocation by category |
 | 🎨 **Theme Switching** | IDE-style dark/light themes with auto-saved preferences |
 | 🔽 **System Tray** | Minimize to tray on close, keeps running in background |
+| 📦 **EXE Packaging** | Build standalone executable, no Python required |
+| ⭐ **GitHub Link** | Quick link to project page in sidebar |
 
 ---
 
@@ -190,6 +192,8 @@ Dayflow/
 ├── 📄 main.py              # Entry point
 ├── ⚙️ config.py            # Configuration
 ├── 📦 requirements.txt     # Dependencies
+├── 🔨 build.py             # EXE build script
+├── 🔨 build.bat            # One-click build batch
 │
 ├── 🧠 core/                # Core logic
 │   ├── types.py            # Data models
@@ -201,9 +205,13 @@ Dayflow/
 │   ├── schema.sql          # Table definitions
 │   └── storage.py          # SQLite management
 │
-└── 🎨 ui/                  # UI layer
-    ├── main_window.py      # Main window
-    └── timeline_view.py    # Timeline component
+├── 🎨 ui/                  # UI layer
+│   ├── main_window.py      # Main window
+│   ├── timeline_view.py    # Timeline component
+│   └── themes.py           # Theme management
+│
+└── 🖼️ assets/              # Resources
+    └── icon.ico            # App icon
 ```
 
 ---
