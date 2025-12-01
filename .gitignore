@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project local data (privacy)
+*.db
+*.sqlite
+*.sqlite3
+
+# Local app data directory (video chunks, database)
+chunks/
+AppData/
+
+# Logs
+*.log
+logs/
+
+# Environment variables / secrets
+.env
+.env.local
+*.env
+
+# API keys (never commit these!)
+secrets.py
+api_keys.py
+
+# Project documentation (internal use only)
+项目技术要求.md
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test files
+test_*.mp4
+*.test.py
