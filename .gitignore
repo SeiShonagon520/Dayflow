@@ -66,3 +66,6 @@ desktop.ini
 # Test files
 test_*.mp4
 *.test.py
+
+# PyInstaller
+*.spec

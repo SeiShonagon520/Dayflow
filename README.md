@@ -231,11 +231,11 @@ Dayflow/
 
 ---
 
-## 灵感来源
+## 💡 灵感来源
 
 本项目灵感源于 [Dayflow (macOS)](https://github.com/JerryZLiu/Dayflow) 开源项目。由于原项目仅支持 macOS 系统，因此我基于相同理念开发了这个 Windows 版本，让更多用户能够体验 AI 驱动的智能时间追踪。
 
-感谢原作者的创意和开源精神！�
+感谢原作者的创意和开源精神！🙏
 
 ---
 
