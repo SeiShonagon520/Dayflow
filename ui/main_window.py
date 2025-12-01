@@ -509,6 +509,14 @@ class MainWindow(QMainWindow):
         self.pause_btn.setEnabled(False)
         sidebar_layout.addWidget(self.pause_btn)
         
+        # GitHub 链接
+        self.github_btn = QPushButton("⭐ GitHub")
+        self.github_btn.setCursor(Qt.PointingHandCursor)
+        self.github_btn.setFixedHeight(32)
+        self.github_btn.setToolTip("在 GitHub 上查看项目")
+        self.github_btn.clicked.connect(self._open_github)
+        sidebar_layout.addWidget(self.github_btn)
+        
         main_layout.addWidget(self.sidebar)
         
         # ===== 主内容区 =====
@@ -773,9 +781,29 @@ class MainWindow(QMainWindow):
             }}
         """)
         
+        # GitHub 按钮
+        self.github_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {t.text_muted};
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                color: {t.accent};
+                background-color: {t.bg_hover};
+            }}
+        """)
+        
         # 更新录制按钮（根据当前状态）
         is_recording = self.recording_manager and self.recording_manager.is_recording
         self._update_record_button(is_recording)
+    
+    def _open_github(self):
+        """打开 GitHub 项目页面"""
+        import webbrowser
+        webbrowser.open("https://github.com/SeiShonagon520/Dayflow")
     
     def _on_card_selected(self, card: ActivityCard):
         """卡片被点击"""
