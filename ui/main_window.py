@@ -237,7 +237,7 @@ class SettingsPanel(QWidget):
         # === 关于 ===
         about_frame, about_layout = self._create_card(layout)
         self._create_title("关于 Dayflow", about_layout)
-        self._create_desc("Windows 版本 1.0.0\n智能时间追踪与生产力分析", about_layout)
+        self._create_desc("Windows 版本 1.1.0\n智能时间追踪与生产力分析", about_layout)
         
         layout.addStretch()
     

@@ -54,7 +54,7 @@ def main():
     
     app = QApplication(sys.argv)
     app.setApplicationName("Dayflow")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion("1.1.0")
     app.setOrganizationName("Dayflow")
     
     # 设置默认字体

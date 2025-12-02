@@ -68,7 +68,17 @@
 
 ## 🖥️ UI Preview
 
-![Dayflow Main Interface](assets/screenshot.png)
+### Timeline Page
+
+![Dayflow Timeline](assets/Dayflow_index.png)
+
+*Timeline: Displays daily activity cards with time range, app, summary, and productivity score*
+
+### Statistics Page
+
+![Dayflow Statistics](assets/Dayflow_Statistics.png)
+
+*Statistics: View weekly/monthly time distribution and productivity trends*
 
 ### Interface Guide
 
