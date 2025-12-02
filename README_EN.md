@@ -54,6 +54,7 @@
 
 | Feature | Description |
 |---------|-------------|
+| 📊 **Statistics Panel** | New stats page with time distribution and productivity trends |
 | 📅 **Date Navigation** | View history with previous/next day and quick "Today" buttons |
 | 📥 **CSV Export** | One-click export activity data to CSV for analysis and archiving |
 | ⏸️ **Pause Recording** | Pause when handling private content, resume when done |
@@ -228,6 +229,38 @@ Dayflow/
 | HTTP Client | httpx (HTTP/2) |
 | Database | SQLite |
 | AI Analysis | OpenAI-compatible API |
+
+---
+
+## 🔐 Security & Privacy
+
+Dayflow takes user privacy seriously with multiple layers of protection:
+
+### Data Storage
+
+| Data Type | Location | Description |
+|-----------|----------|-------------|
+| Video Chunks | Local `%LOCALAPPDATA%\Dayflow\chunks\` | Temporary storage only |
+| Analysis Results | Local `dayflow.db` | SQLite database |
+| User Settings | Local database | Including API Key |
+
+### Privacy Protection Measures
+
+| Measure | Description |
+|---------|-------------|
+| 📍 **Local First** | All raw screen recordings are stored locally only, full videos are never uploaded |
+| 🗑️ **Auto Cleanup** | Video chunks are automatically deleted after AI analysis, saving disk space |
+| 🖼️ **Minimal Transfer** | Only key frames (max 8 per chunk) are extracted and sent for AI analysis |
+| ⏸️ **Pause Feature** | Pause recording anytime when handling sensitive content, resume when done |
+| 🔒 **Local Database** | Analysis results are stored in local SQLite, never uploaded to cloud |
+
+### Recommendations
+
+- When handling banking, passwords, or sensitive information, click the **⏸️ Pause** button
+- Click **▶ Resume** to continue recording when done
+- Periodically check `%LOCALAPPDATA%\Dayflow\` to confirm data cleanup is working properly
+
+> 💡 **Note**: Dayflow's design philosophy is "local recording + cloud analysis + local storage". Raw videos never leave your computer.
 
 ---
 

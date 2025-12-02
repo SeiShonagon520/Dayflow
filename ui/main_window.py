@@ -17,6 +17,7 @@ from PySide6.QtGui import QIcon, QAction, QFont, QColor, QPalette
 
 import config
 from ui.timeline_view import TimelineView
+from ui.stats_view import StatsPanel
 from ui.themes import get_theme_manager, get_theme
 from core.types import ActivityCard
 from database.storage import StorageManager
@@ -485,8 +486,12 @@ class MainWindow(QMainWindow):
         self.nav_timeline.clicked.connect(lambda: self._switch_page(0))
         sidebar_layout.addWidget(self.nav_timeline)
         
+        self.nav_stats = SidebarButton("统计", "📈")
+        self.nav_stats.clicked.connect(lambda: self._switch_page(1))
+        sidebar_layout.addWidget(self.nav_stats)
+        
         self.nav_settings = SidebarButton("设置", "⚙️")
-        self.nav_settings.clicked.connect(lambda: self._switch_page(1))
+        self.nav_settings.clicked.connect(lambda: self._switch_page(2))
         sidebar_layout.addWidget(self.nav_settings)
         
         sidebar_layout.addStretch()
@@ -529,6 +534,10 @@ class MainWindow(QMainWindow):
         self.timeline_view.date_changed.connect(self._on_date_changed)
         self.timeline_view.export_requested.connect(self._on_export_requested)
         self.stack.addWidget(self.timeline_view)
+        
+        # 统计页面
+        self.stats_panel = StatsPanel(self.storage)
+        self.stack.addWidget(self.stats_panel)
         
         # 设置页面
         self.settings_panel = SettingsPanel(self.storage)
@@ -634,7 +643,12 @@ class MainWindow(QMainWindow):
         """切换页面"""
         self.stack.setCurrentIndex(index)
         self.nav_timeline.setChecked(index == 0)
-        self.nav_settings.setChecked(index == 1)
+        self.nav_stats.setChecked(index == 1)
+        self.nav_settings.setChecked(index == 2)
+        
+        # 切换到统计页面时刷新数据
+        if index == 1:
+            self.stats_panel.refresh()
     
     def _toggle_recording(self):
         """切换录制状态"""
@@ -685,7 +699,7 @@ class MainWindow(QMainWindow):
                     "提示", 
                     "请先在设置中配置 API Key"
                 )
-                self._switch_page(1)
+                self._switch_page(2)
                 return
             
             self.recording_manager.start_recording()
