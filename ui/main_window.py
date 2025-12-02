@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QFrame,
     QLineEdit, QMessageBox, QSystemTrayIcon, QMenu,
-    QApplication, QSizePolicy, QSpacerItem, QFileDialog
+    QApplication, QSizePolicy, QSpacerItem, QFileDialog,
+    QScrollArea
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QIcon, QAction, QFont, QColor, QPalette
@@ -135,6 +136,8 @@ class SettingsPanel(QWidget):
     """设置面板"""
     
     api_key_saved = Signal(str)
+    email_success = Signal()  # 邮件发送成功信号
+    email_error = Signal(str)  # 邮件发送失败信号
     
     def __init__(self, storage: StorageManager, parent=None):
         super().__init__(parent)
@@ -146,21 +149,27 @@ class SettingsPanel(QWidget):
         self._load_settings()
         self.apply_theme()
         get_theme_manager().theme_changed.connect(self.apply_theme)
+        
+        # 连接邮件信号
+        self.email_success.connect(self._show_email_success)
+        self.email_error.connect(self._show_email_error)
     
     def _create_card(self, layout) -> QFrame:
         """创建设置卡片"""
         frame = QFrame()
+        frame.setObjectName("settingsCard")
         self._frames.append(frame)
         frame_layout = QVBoxLayout(frame)
-        frame_layout.setContentsMargins(20, 20, 20, 20)
-        frame_layout.setSpacing(12)
+        frame_layout.setContentsMargins(20, 16, 20, 16)
+        frame_layout.setSpacing(10)
         layout.addWidget(frame)
         return frame, frame_layout
     
     def _create_title(self, text: str, layout) -> QLabel:
         """创建卡片标题"""
         label = QLabel(text)
-        label.setProperty("role", "title")
+        label.setObjectName("cardTitle")
+        label.setMinimumHeight(24)
         self._titles.append(label)
         layout.addWidget(label)
         return label
@@ -168,119 +177,298 @@ class SettingsPanel(QWidget):
     def _create_desc(self, text: str, layout) -> QLabel:
         """创建描述文字"""
         label = QLabel(text)
-        label.setProperty("role", "desc")
+        label.setObjectName("cardDesc")
+        label.setWordWrap(True)
+        label.setMinimumHeight(20)
         self._descs.append(label)
         layout.addWidget(label)
         return label
     
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(24)
+        # 主布局
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # 创建滚动区域
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        
+        # 滚动区域内容
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(32, 24, 32, 24)
+        layout.setSpacing(16)
         
         # 页面标题
-        self.page_title = QLabel("设置")
+        self.page_title = QLabel("⚙️ 设置")
+        self.page_title.setMinimumHeight(40)
         layout.addWidget(self.page_title)
         
         # === API Key 设置 ===
         api_frame, api_layout = self._create_card(layout)
-        self._create_title("API Key", api_layout)
-        self._create_desc("请输入您的心流 API Key 以启用云端分析功能\n控制台获取密钥，API 地址: https://apis.iflow.cn/v1", api_layout)
+        self._create_title("🔑 API Key", api_layout)
         
-        # API Key 输入行
-        key_row = QHBoxLayout()
+        api_desc = QLabel("请输入您的心流 API Key 以启用云端分析功能")
+        api_desc.setObjectName("cardDesc")
+        api_desc.setWordWrap(True)
+        self._descs.append(api_desc)
+        api_layout.addWidget(api_desc)
+        
+        api_url = QLabel("API 地址: https://apis.iflow.cn/v1")
+        api_url.setObjectName("cardDesc")
+        self._descs.append(api_url)
+        api_layout.addWidget(api_url)
+        
+        # API Key 输入框
         self.api_key_input = QLineEdit()
         self.api_key_input.setPlaceholderText("输入 API Key...")
         self.api_key_input.setEchoMode(QLineEdit.Password)
-        key_row.addWidget(self.api_key_input)
+        self.api_key_input.setMinimumHeight(44)
+        api_layout.addWidget(self.api_key_input)
+        
+        # 按钮行
+        key_row = QHBoxLayout()
+        key_row.setSpacing(10)
         
         self.save_btn = QPushButton("保存")
         self.save_btn.setCursor(Qt.PointingHandCursor)
-        self.save_btn.setFixedSize(80, 44)
+        self.save_btn.setFixedSize(80, 40)
         self.save_btn.clicked.connect(self._save_api_key)
         key_row.addWidget(self.save_btn)
         
         self.test_btn = QPushButton("测试连接")
         self.test_btn.setCursor(Qt.PointingHandCursor)
-        self.test_btn.setFixedSize(90, 44)
+        self.test_btn.setFixedSize(100, 40)
         self.test_btn.clicked.connect(self._test_connection)
         key_row.addWidget(self.test_btn)
         
+        key_row.addStretch()
         api_layout.addLayout(key_row)
         
         # 测试结果
         self.test_result_label = QLabel("")
         self.test_result_label.setWordWrap(True)
+        self.test_result_label.setMinimumHeight(24)
         self.test_result_label.hide()
         api_layout.addWidget(self.test_result_label)
         
-        # === 录制设置 ===
-        record_frame, record_layout = self._create_card(layout)
-        self._create_title("录制设置", record_layout)
-        self._create_desc(f"帧率: {config.RECORD_FPS} FPS  |  切片时长: {config.CHUNK_DURATION_SECONDS} 秒", record_layout)
+        # === 外观 + 录制设置（合并为一行两列）===
+        settings_row = QHBoxLayout()
+        settings_row.setSpacing(16)
         
-        # === 外观设置 ===
-        theme_frame, theme_layout = self._create_card(layout)
-        self._create_title("外观设置", theme_layout)
+        # 外观设置
+        theme_frame = QFrame()
+        theme_frame.setObjectName("settingsCard")
+        self._frames.append(theme_frame)
+        theme_layout = QVBoxLayout(theme_frame)
+        theme_layout.setContentsMargins(20, 16, 20, 16)
+        theme_layout.setSpacing(10)
         
-        theme_row = QHBoxLayout()
+        self._create_title("🎨 外观", theme_layout)
+        
+        theme_content = QHBoxLayout()
         self.theme_label = QLabel("主题模式")
+        self.theme_label.setObjectName("cardDesc")
         self._descs.append(self.theme_label)
-        theme_row.addWidget(self.theme_label)
-        theme_row.addStretch()
+        theme_content.addWidget(self.theme_label)
+        theme_content.addStretch()
         
         self.theme_toggle = QPushButton("🌙 暗色")
         self.theme_toggle.setCursor(Qt.PointingHandCursor)
-        self.theme_toggle.setFixedSize(100, 36)
+        self.theme_toggle.setFixedSize(90, 34)
         self.theme_toggle.clicked.connect(self._toggle_theme)
-        theme_row.addWidget(self.theme_toggle)
-        theme_layout.addLayout(theme_row)
+        theme_content.addWidget(self.theme_toggle)
+        theme_layout.addLayout(theme_content)
+        
+        settings_row.addWidget(theme_frame)
+        
+        # 录制设置
+        record_frame = QFrame()
+        record_frame.setObjectName("settingsCard")
+        self._frames.append(record_frame)
+        record_layout = QVBoxLayout(record_frame)
+        record_layout.setContentsMargins(20, 16, 20, 16)
+        record_layout.setSpacing(10)
+        
+        self._create_title("🎬 录制", record_layout)
+        record_desc = QLabel(f"帧率: {config.RECORD_FPS} FPS | 切片: {config.CHUNK_DURATION_SECONDS}秒")
+        record_desc.setObjectName("cardDesc")
+        self._descs.append(record_desc)
+        record_layout.addWidget(record_desc)
+        
+        settings_row.addWidget(record_frame)
+        layout.addLayout(settings_row)
         
         # === 数据管理 ===
         data_frame, data_layout = self._create_card(layout)
-        self._create_title("数据管理", data_layout)
+        self._create_title("💾 数据管理", data_layout)
         self._create_desc("导出或导入您的所有活动数据", data_layout)
         
         data_row = QHBoxLayout()
-        data_row.setSpacing(12)
+        data_row.setSpacing(10)
         
         self.export_btn = QPushButton("📤 导出数据")
         self.export_btn.setCursor(Qt.PointingHandCursor)
-        self.export_btn.setFixedHeight(40)
+        self.export_btn.setFixedHeight(38)
         self.export_btn.clicked.connect(self._export_data)
         data_row.addWidget(self.export_btn)
         
         self.import_btn = QPushButton("📥 导入数据")
         self.import_btn.setCursor(Qt.PointingHandCursor)
-        self.import_btn.setFixedHeight(40)
+        self.import_btn.setFixedHeight(38)
         self.import_btn.clicked.connect(self._import_data)
         data_row.addWidget(self.import_btn)
         
         data_row.addStretch()
         data_layout.addLayout(data_row)
         
+        # === 邮件推送设置 ===
+        email_frame, email_layout = self._create_card(layout)
+        self._create_title("📧 邮件推送", email_layout)
+        self._create_desc("每日 12:00 和 22:00 自动发送效率报告", email_layout)
+        
+        # 启用开关行
+        enable_row = QHBoxLayout()
+        self.email_enable_label = QLabel("启用推送")
+        self.email_enable_label.setObjectName("cardDesc")
+        self._descs.append(self.email_enable_label)
+        enable_row.addWidget(self.email_enable_label)
+        enable_row.addStretch()
+        
+        self.email_enable_btn = QPushButton("已关闭")
+        self.email_enable_btn.setCheckable(True)
+        self.email_enable_btn.setCursor(Qt.PointingHandCursor)
+        self.email_enable_btn.setFixedSize(72, 30)
+        self.email_enable_btn.clicked.connect(self._toggle_email)
+        enable_row.addWidget(self.email_enable_btn)
+        email_layout.addLayout(enable_row)
+        
+        # 邮箱输入区域（使用网格布局更紧凑）
+        email_grid = QVBoxLayout()
+        email_grid.setSpacing(8)
+        
+        # 发送邮箱
+        sender_label = QLabel("发送邮箱")
+        sender_label.setObjectName("inputLabel")
+        self._descs.append(sender_label)
+        email_grid.addWidget(sender_label)
+        
+        self.email_sender_input = QLineEdit()
+        self.email_sender_input.setPlaceholderText("123456789@qq.com")
+        self.email_sender_input.setMinimumHeight(40)
+        email_grid.addWidget(self.email_sender_input)
+        
+        # 授权码
+        auth_label = QLabel("授权码（在 QQ 邮箱设置中获取，非密码）")
+        auth_label.setObjectName("inputLabel")
+        self._descs.append(auth_label)
+        email_grid.addWidget(auth_label)
+        
+        self.email_auth_input = QLineEdit()
+        self.email_auth_input.setPlaceholderText("16位授权码")
+        self.email_auth_input.setEchoMode(QLineEdit.Password)
+        self.email_auth_input.setMinimumHeight(40)
+        email_grid.addWidget(self.email_auth_input)
+        
+        # 接收邮箱
+        receiver_label = QLabel("接收邮箱")
+        receiver_label.setObjectName("inputLabel")
+        self._descs.append(receiver_label)
+        email_grid.addWidget(receiver_label)
+        
+        self.email_receiver_input = QLineEdit()
+        self.email_receiver_input.setPlaceholderText("your_email@qq.com")
+        self.email_receiver_input.setMinimumHeight(40)
+        email_grid.addWidget(self.email_receiver_input)
+        
+        email_layout.addLayout(email_grid)
+        
+        # 按钮行
+        email_btn_row = QHBoxLayout()
+        email_btn_row.setSpacing(10)
+        
+        self.email_save_btn = QPushButton("保存配置")
+        self.email_save_btn.setCursor(Qt.PointingHandCursor)
+        self.email_save_btn.setFixedHeight(38)
+        self.email_save_btn.clicked.connect(self._save_email_config)
+        email_btn_row.addWidget(self.email_save_btn)
+        
+        self.email_test_btn = QPushButton("📨 测试发送")
+        self.email_test_btn.setCursor(Qt.PointingHandCursor)
+        self.email_test_btn.setFixedHeight(38)
+        self.email_test_btn.clicked.connect(self._send_test_email)
+        email_btn_row.addWidget(self.email_test_btn)
+        
+        email_btn_row.addStretch()
+        email_layout.addLayout(email_btn_row)
+        
+        # 测试结果
+        self.email_result_label = QLabel("")
+        self.email_result_label.setWordWrap(True)
+        self.email_result_label.setMinimumHeight(20)
+        self.email_result_label.hide()
+        email_layout.addWidget(self.email_result_label)
+        
         # === 关于 ===
         about_frame, about_layout = self._create_card(layout)
-        self._create_title("关于 Dayflow", about_layout)
-        self._create_desc("Windows 版本 1.2.0\n智能时间追踪与生产力分析", about_layout)
+        self._create_title("ℹ️ 关于 Dayflow", about_layout)
         
-        layout.addStretch()
+        about_text = QLabel("Windows 版本 1.2.0\n智能时间追踪与生产力分析工具")
+        about_text.setObjectName("cardDesc")
+        about_text.setWordWrap(True)
+        self._descs.append(about_text)
+        about_layout.addWidget(about_text)
+        
+        # 底部留白
+        layout.addSpacing(20)
+        
+        # 设置滚动区域
+        self.scroll.setWidget(scroll_content)
+        main_layout.addWidget(self.scroll)
     
     def apply_theme(self):
         """应用主题"""
         t = get_theme()
         
+        # 滚动区域
+        self.scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {t.bg_primary};
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                width: 8px;
+                background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {t.scrollbar};
+                border-radius: 4px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {t.scrollbar_hover};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+        
         # 页面标题
         self.page_title.setStyleSheet(f"""
-            font-size: 24px;
+            font-size: 22px;
             font-weight: 700;
             color: {t.text_primary};
+            font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+            padding: 4px 0;
         """)
         
         # 所有卡片
         for frame in self._frames:
             frame.setStyleSheet(f"""
-                QFrame {{
+                QFrame#settingsCard {{
                     background-color: {t.bg_secondary};
                     border: 1px solid {t.border};
                     border-radius: 12px;
@@ -290,19 +478,20 @@ class SettingsPanel(QWidget):
         # 标题
         for title in self._titles:
             title.setStyleSheet(f"""
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: 600;
                 color: {t.text_primary};
                 font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                padding: 2px 0;
             """)
         
         # 描述文字
         for desc in self._descs:
             desc.setStyleSheet(f"""
                 font-size: 13px;
-                color: {t.text_muted};
+                color: {t.text_secondary};
                 font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-                line-height: 1.5;
+                padding: 2px 0;
             """)
         
         # API Key 输入框
@@ -385,6 +574,67 @@ class SettingsPanel(QWidget):
         """
         self.export_btn.setStyleSheet(data_btn_style)
         self.import_btn.setStyleSheet(data_btn_style)
+        
+        # 邮件输入框样式
+        email_input_style = f"""
+            QLineEdit {{
+                background-color: {t.bg_tertiary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 14px;
+                color: {t.text_primary};
+            }}
+            QLineEdit:focus {{
+                border-color: {t.accent};
+            }}
+        """
+        self.email_sender_input.setStyleSheet(email_input_style)
+        self.email_auth_input.setStyleSheet(email_input_style)
+        self.email_receiver_input.setStyleSheet(email_input_style)
+        
+        # 邮件启用按钮
+        if self.email_enable_btn.isChecked():
+            self.email_enable_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {t.success};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }}
+            """)
+        else:
+            self.email_enable_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {t.bg_tertiary};
+                    color: {t.text_muted};
+                    border: 1px solid {t.border};
+                    border-radius: 6px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {t.bg_hover};
+                }}
+            """)
+        
+        # 邮件按钮
+        self.email_save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.accent};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 0 20px;
+            }}
+            QPushButton:hover {{
+                background-color: {t.accent_hover};
+            }}
+        """)
+        self.email_test_btn.setStyleSheet(data_btn_style)
     
     def _load_settings(self):
         api_key = self.storage.get_setting("api_key", "")
@@ -394,6 +644,14 @@ class SettingsPanel(QWidget):
         # 加载主题设置
         theme = self.storage.get_setting("theme", "dark")
         self._update_theme_button(theme == "dark")
+        
+        # 加载邮件设置
+        self.email_sender_input.setText(self.storage.get_setting("email_sender", ""))
+        self.email_auth_input.setText(self.storage.get_setting("email_auth", ""))
+        self.email_receiver_input.setText(self.storage.get_setting("email_receiver", ""))
+        email_enabled = self.storage.get_setting("email_enabled", "false") == "true"
+        self.email_enable_btn.setChecked(email_enabled)
+        self._update_email_button()
     
     def _save_api_key(self):
         api_key = self.api_key_input.text().strip()
@@ -623,6 +881,149 @@ class SettingsPanel(QWidget):
             )
         except Exception as e:
             QMessageBox.critical(self, "导入失败", f"导入数据时出错: {e}")
+    
+    def _toggle_email(self):
+        """切换邮件推送状态"""
+        self._update_email_button()
+    
+    def _update_email_button(self):
+        """更新邮件开关按钮状态"""
+        t = get_theme()
+        if self.email_enable_btn.isChecked():
+            self.email_enable_btn.setText("已开启")
+            self.email_enable_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {t.success};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }}
+            """)
+        else:
+            self.email_enable_btn.setText("已关闭")
+            self.email_enable_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {t.bg_tertiary};
+                    color: {t.text_muted};
+                    border: 1px solid {t.border};
+                    border-radius: 6px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {t.bg_hover};
+                }}
+            """)
+    
+    def _save_email_config(self):
+        """保存邮件配置"""
+        sender = self.email_sender_input.text().strip()
+        auth = self.email_auth_input.text().strip()
+        receiver = self.email_receiver_input.text().strip()
+        enabled = self.email_enable_btn.isChecked()
+        
+        # 验证
+        if enabled and (not sender or not auth or not receiver):
+            QMessageBox.warning(self, "配置不完整", "请填写完整的邮箱信息")
+            return
+        
+        # 保存
+        self.storage.set_setting("email_sender", sender)
+        self.storage.set_setting("email_auth", auth)
+        self.storage.set_setting("email_receiver", receiver)
+        self.storage.set_setting("email_enabled", "true" if enabled else "false")
+        
+        QMessageBox.information(self, "成功", "邮件配置已保存")
+    
+    def _send_test_email(self):
+        """发送测试邮件"""
+        sender = self.email_sender_input.text().strip()
+        auth = self.email_auth_input.text().strip()
+        receiver = self.email_receiver_input.text().strip()
+        
+        if not sender or not auth or not receiver:
+            QMessageBox.warning(self, "配置不完整", "请先填写完整的邮箱信息")
+            return
+        
+        # 显示加载状态
+        self.email_test_btn.setEnabled(False)
+        self.email_test_btn.setText("发送中...")
+        self.email_result_label.setText("正在发送测试邮件...")
+        self.email_result_label.setStyleSheet("font-size: 13px; color: #9CA3AF; padding: 8px 0;")
+        self.email_result_label.show()
+        
+        # 在后台线程发送
+        import threading
+        def send():
+            try:
+                from core.email_service import EmailConfig, EmailService, ReportGenerator
+                
+                email_config = EmailConfig(
+                    sender_email=sender,
+                    auth_code=auth,
+                    receiver_email=receiver,
+                    enabled=True
+                )
+                service = EmailService(email_config)
+                generator = ReportGenerator(self.storage)
+                
+                from datetime import datetime
+                subject = f"🧪 Dayflow 测试邮件 - {datetime.now().strftime('%H:%M')}"
+                html = generator.generate_daily_report()
+                
+                success, error_msg = service.send_report(subject, html)
+                
+                # 使用信号回到主线程更新 UI
+                if success:
+                    self.email_success.emit()
+                else:
+                    self.email_error.emit(error_msg)
+                    
+            except Exception as e:
+                self.email_error.emit(str(e))
+        
+        threading.Thread(target=send, daemon=True).start()
+    
+    def _show_email_success(self):
+        """显示邮件发送成功"""
+        self.email_test_btn.setEnabled(True)
+        self.email_test_btn.setText("📨 测试发送")
+        t = get_theme()
+        self.email_result_label.setText("✅ 测试邮件发送成功！请检查收件箱")
+        self.email_result_label.setStyleSheet(f"font-size: 13px; color: {t.success}; padding: 4px 0;")
+    
+    def _show_email_error(self, error: str):
+        """显示邮件发送失败"""
+        self.email_test_btn.setEnabled(True)
+        self.email_test_btn.setText("📨 测试发送")
+        t = get_theme()
+        self.email_result_label.setText(f"❌ {error}")
+        self.email_result_label.setStyleSheet(f"font-size: 13px; color: {t.error}; padding: 4px 0;")
+    
+    @Slot(bool)
+    def _on_test_email_result(self, success: bool):
+        """测试邮件结果回调"""
+        self.email_test_btn.setEnabled(True)
+        self.email_test_btn.setText("📨 发送测试邮件")
+        
+        t = get_theme()
+        if success:
+            self.email_result_label.setText("✅ 测试邮件发送成功！请检查收件箱")
+            self.email_result_label.setStyleSheet(f"font-size: 13px; color: {t.success}; padding: 8px 0;")
+        else:
+            self.email_result_label.setText("❌ 发送失败，请检查邮箱配置")
+            self.email_result_label.setStyleSheet(f"font-size: 13px; color: {t.error}; padding: 8px 0;")
+    
+    @Slot(str)
+    def _on_test_email_error(self, error: str):
+        """测试邮件错误回调"""
+        self.email_test_btn.setEnabled(True)
+        self.email_test_btn.setText("📨 发送测试邮件")
+        
+        t = get_theme()
+        self.email_result_label.setText(f"❌ 发送失败: {error}")
+        self.email_result_label.setStyleSheet(f"font-size: 13px; color: {t.error}; padding: 8px 0;")
 
 
 class MainWindow(QMainWindow):
@@ -818,6 +1219,14 @@ class MainWindow(QMainWindow):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._refresh_timeline)
         self.refresh_timer.start(30000)  # 每 30 秒刷新
+        
+        # 邮件定时检查器 - 每分钟检查一次
+        self.email_timer = QTimer(self)
+        self.email_timer.timeout.connect(self._check_email_schedule)
+        self.email_timer.start(60000)  # 每 60 秒检查
+        
+        # 初始化邮件调度器
+        self._init_email_scheduler()
     
     def _load_data(self):
         """加载数据"""
@@ -1173,3 +1582,37 @@ class MainWindow(QMainWindow):
                 QSystemTrayIcon.Information,
                 2000
             )
+    
+    def _init_email_scheduler(self):
+        """初始化邮件调度器"""
+        from core.email_service import EmailConfig, EmailService, ReportGenerator, EmailScheduler
+        
+        # 加载配置
+        email_config = EmailConfig(
+            sender_email=self.storage.get_setting("email_sender", ""),
+            auth_code=self.storage.get_setting("email_auth", ""),
+            receiver_email=self.storage.get_setting("email_receiver", ""),
+            enabled=self.storage.get_setting("email_enabled", "false") == "true"
+        )
+        
+        email_service = EmailService(email_config)
+        report_generator = ReportGenerator(self.storage)
+        self.email_scheduler = EmailScheduler(email_service, report_generator)
+        
+        logger.info("邮件调度器已初始化")
+    
+    def _check_email_schedule(self):
+        """检查是否需要发送定时邮件"""
+        # 重新加载配置（以防用户修改）
+        enabled = self.storage.get_setting("email_enabled", "false") == "true"
+        if not enabled:
+            return
+        
+        # 更新配置
+        self.email_scheduler.email_service.config.sender_email = self.storage.get_setting("email_sender", "")
+        self.email_scheduler.email_service.config.auth_code = self.storage.get_setting("email_auth", "")
+        self.email_scheduler.email_service.config.receiver_email = self.storage.get_setting("email_receiver", "")
+        self.email_scheduler.email_service.config.enabled = enabled
+        
+        # 检查并发送
+        self.email_scheduler.check_and_send()

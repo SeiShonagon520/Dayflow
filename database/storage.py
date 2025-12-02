@@ -279,3 +279,5 @@ class StorageManager:
                 """,
                 (key, value, value)
             )
+            # 确保 WAL 模式下数据刷盘
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
