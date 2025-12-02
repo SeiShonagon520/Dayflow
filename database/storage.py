@@ -3,6 +3,7 @@ Dayflow Windows - 数据库管理
 """
 import sqlite3
 import json
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional
@@ -17,10 +18,11 @@ from core.types import (
 
 
 class StorageManager:
-    """SQLite 数据库管理器"""
+    """SQLite 数据库管理器 - 带连接缓存"""
     
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or config.DATABASE_PATH
+        self._local = threading.local()  # 线程本地存储
         self._init_database()
     
     def _init_database(self):
@@ -30,19 +32,30 @@ class StorageManager:
             with open(schema_path, "r", encoding="utf-8") as f:
                 conn.executescript(f.read())
     
+    def _get_cached_connection(self):
+        """获取线程本地的缓存连接"""
+        if not hasattr(self._local, 'conn') or self._local.conn is None:
+            self._local.conn = sqlite3.connect(
+                str(self.db_path),
+                check_same_thread=False,
+                timeout=30.0
+            )
+            self._local.conn.row_factory = sqlite3.Row
+            # 启用 WAL 模式提升并发性能
+            self._local.conn.execute("PRAGMA journal_mode=WAL")
+            self._local.conn.execute("PRAGMA synchronous=NORMAL")
+        return self._local.conn
+    
     @contextmanager
     def _get_connection(self):
-        """获取数据库连接上下文"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
+        """获取数据库连接上下文 - 使用缓存连接"""
+        conn = self._get_cached_connection()
         try:
             yield conn
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
     
     # ==================== Chunks ====================
     

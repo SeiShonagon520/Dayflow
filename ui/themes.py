@@ -47,53 +47,53 @@ class Theme:
     shadow: str
 
 
-# 暗色主题 - 科技感深色 (类似 VS Code Dark+)
+# 暗色主题 - Apple 风格深色
 DARK_THEME = Theme(
     name="dark",
-    bg_primary="#0D1117",       # GitHub Dark 风格深黑
-    bg_secondary="#161B22",     # 卡片背景
-    bg_tertiary="#21262D",      # 输入框背景
-    bg_hover="#30363D",         # 悬停背景
-    bg_sidebar="#010409",       # 侧边栏更深
-    border="#30363D",
-    border_hover="#484F58",
-    text_primary="#FFFFFF",     # 纯白，更清晰
-    text_secondary="#E6EDF3",   # 次要文字也更亮
-    text_muted="#9CA3AF",       # 弱化文字稍亮
-    accent="#58A6FF",           # GitHub 蓝
-    accent_hover="#79C0FF",
-    accent_light="#388BFD26",   # 带透明度的蓝
-    success="#3FB950",
-    warning="#D29922",
-    error="#F85149",
-    scrollbar="#484F58",
-    scrollbar_hover="#6E7681",
-    shadow="rgba(0, 0, 0, 0.4)",
+    bg_primary="#1C1C1E",       # Apple 深灰背景
+    bg_secondary="#2C2C2E",     # 卡片背景 - 略浅
+    bg_tertiary="#3A3A3C",      # 输入框背景
+    bg_hover="#48484A",         # 悬停背景
+    bg_sidebar="#1C1C1E",       # 侧边栏
+    border="#3A3A3C",           # 柔和边框
+    border_hover="#545456",
+    text_primary="#FFFFFF",     # 纯白
+    text_secondary="#EBEBF5",   # 次要文字 - Apple 风格
+    text_muted="#8E8E93",       # 弱化文字 - Apple 灰
+    accent="#0A84FF",           # Apple 蓝
+    accent_hover="#409CFF",
+    accent_light="rgba(10, 132, 255, 0.15)",
+    success="#30D158",          # Apple 绿
+    warning="#FF9F0A",          # Apple 橙
+    error="#FF453A",            # Apple 红
+    scrollbar="#48484A",
+    scrollbar_hover="#636366",
+    shadow="rgba(0, 0, 0, 0.35)",
 )
 
 
-# 亮色主题 - 纯白质感 (类似 VS Code Light+)
+# 亮色主题 - Apple 风格浅色
 LIGHT_THEME = Theme(
     name="light",
-    bg_primary="#FFFFFF",       # 纯白主背景
-    bg_secondary="#F6F8FA",     # 浅灰卡片
-    bg_tertiary="#E8ECF0",      # 输入框/进度条背景稍深
-    bg_hover="#EAEEF2",         # 悬停
-    bg_sidebar="#F6F8FA",       # 侧边栏
-    border="#D0D7DE",           # 边框稍深
-    border_hover="#AFB8C1",
-    text_primary="#1B1F23",     # 接近纯黑
-    text_secondary="#24292F",   # 次要文字也很深
-    text_muted="#57606A",       # 弱化文字更深
-    accent="#0969DA",           # GitHub 蓝
-    accent_hover="#0550AE",
-    accent_light="#DDF4FF",     # 浅蓝背景
-    success="#1A7F37",
-    warning="#9A6700",
-    error="#CF222E",
-    scrollbar="#AFB8C1",
-    scrollbar_hover="#8C959F",
-    shadow="rgba(31, 35, 40, 0.12)",
+    bg_primary="#FFFFFF",       # 纯白
+    bg_secondary="#F2F2F7",     # Apple 浅灰背景
+    bg_tertiary="#E5E5EA",      # 输入框背景
+    bg_hover="#D1D1D6",         # 悬停
+    bg_sidebar="#F2F2F7",       # 侧边栏
+    border="#C6C6C8",           # Apple 边框
+    border_hover="#AEAEB2",
+    text_primary="#000000",     # 纯黑
+    text_secondary="#3C3C43",   # 次要文字
+    text_muted="#8E8E93",       # 弱化文字
+    accent="#007AFF",           # Apple 蓝
+    accent_hover="#0056CC",
+    accent_light="rgba(0, 122, 255, 0.12)",
+    success="#34C759",          # Apple 绿
+    warning="#FF9500",          # Apple 橙
+    error="#FF3B30",            # Apple 红
+    scrollbar="#C6C6C8",
+    scrollbar_hover="#AEAEB2",
+    shadow="rgba(0, 0, 0, 0.08)",
 )
 
 

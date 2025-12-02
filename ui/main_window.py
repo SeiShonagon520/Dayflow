@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QFrame,
     QLineEdit, QMessageBox, QSystemTrayIcon, QMenu,
-    QApplication, QSizePolicy, QSpacerItem
+    QApplication, QSizePolicy, QSpacerItem, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QIcon, QAction, QFont, QColor, QPalette
@@ -46,11 +46,12 @@ class SidebarButton(QPushButton):
                 background-color: transparent;
                 color: {t.text_muted};
                 border: none;
-                border-radius: 8px;
+                border-radius: 10px;
                 text-align: left;
-                padding-left: 12px;
+                padding-left: 14px;
                 font-size: 14px;
                 font-weight: 500;
+                margin: 2px 8px;
             }}
             QPushButton:hover {{
                 background-color: {t.bg_hover};
@@ -59,6 +60,7 @@ class SidebarButton(QPushButton):
             QPushButton:checked {{
                 background-color: {t.accent};
                 color: #FFFFFF;
+                font-weight: 600;
             }}
         """)
 
@@ -234,10 +236,33 @@ class SettingsPanel(QWidget):
         theme_row.addWidget(self.theme_toggle)
         theme_layout.addLayout(theme_row)
         
+        # === 数据管理 ===
+        data_frame, data_layout = self._create_card(layout)
+        self._create_title("数据管理", data_layout)
+        self._create_desc("导出或导入您的所有活动数据", data_layout)
+        
+        data_row = QHBoxLayout()
+        data_row.setSpacing(12)
+        
+        self.export_btn = QPushButton("📤 导出数据")
+        self.export_btn.setCursor(Qt.PointingHandCursor)
+        self.export_btn.setFixedHeight(40)
+        self.export_btn.clicked.connect(self._export_data)
+        data_row.addWidget(self.export_btn)
+        
+        self.import_btn = QPushButton("📥 导入数据")
+        self.import_btn.setCursor(Qt.PointingHandCursor)
+        self.import_btn.setFixedHeight(40)
+        self.import_btn.clicked.connect(self._import_data)
+        data_row.addWidget(self.import_btn)
+        
+        data_row.addStretch()
+        data_layout.addLayout(data_row)
+        
         # === 关于 ===
         about_frame, about_layout = self._create_card(layout)
         self._create_title("关于 Dayflow", about_layout)
-        self._create_desc("Windows 版本 1.1.0\n智能时间追踪与生产力分析", about_layout)
+        self._create_desc("Windows 版本 1.2.0\n智能时间追踪与生产力分析", about_layout)
         
         layout.addStretch()
     
@@ -268,6 +293,7 @@ class SettingsPanel(QWidget):
                 font-size: 16px;
                 font-weight: 600;
                 color: {t.text_primary};
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
             """)
         
         # 描述文字
@@ -275,7 +301,25 @@ class SettingsPanel(QWidget):
             desc.setStyleSheet(f"""
                 font-size: 13px;
                 color: {t.text_muted};
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                line-height: 1.5;
             """)
+        
+        # API Key 输入框
+        self.api_key_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {t.bg_tertiary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 14px;
+                color: {t.text_primary};
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+            }}
+            QLineEdit:focus {{
+                border-color: {t.accent};
+            }}
+        """)
         
         # 主要按钮（保存）
         self.save_btn.setStyleSheet(f"""
@@ -323,6 +367,24 @@ class SettingsPanel(QWidget):
                 background-color: {t.bg_hover};
             }}
         """)
+        
+        # 数据管理按钮
+        data_btn_style = f"""
+            QPushButton {{
+                background-color: {t.bg_tertiary};
+                color: {t.text_primary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                font-size: 13px;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{
+                background-color: {t.bg_hover};
+                border-color: {t.accent};
+            }}
+        """
+        self.export_btn.setStyleSheet(data_btn_style)
+        self.import_btn.setStyleSheet(data_btn_style)
     
     def _load_settings(self):
         api_key = self.storage.get_setting("api_key", "")
@@ -427,6 +489,140 @@ class SettingsPanel(QWidget):
             self.theme_toggle.setText("🌙 暗色")
         else:
             self.theme_toggle.setText("☀️ 亮色")
+    
+    def _export_data(self):
+        """导出数据"""
+        import json
+        import shutil
+        from pathlib import Path
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出数据",
+            f"dayflow_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            "JSON 文件 (*.json)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # 获取所有数据
+            data = {
+                "version": "1.2.0",
+                "exported_at": datetime.now().isoformat(),
+                "cards": [],
+                "settings": {}
+            }
+            
+            # 导出所有卡片（获取最近一年的数据）
+            with self.storage._get_connection() as conn:
+                cursor = conn.execute("SELECT * FROM timeline_cards ORDER BY start_time DESC")
+                for row in cursor.fetchall():
+                    card_data = {
+                        "id": row["id"],
+                        "category": row["category"],
+                        "title": row["title"],
+                        "summary": row["summary"],
+                        "start_time": row["start_time"],
+                        "end_time": row["end_time"],
+                        "app_sites_json": row["app_sites_json"],
+                        "distractions_json": row["distractions_json"],
+                        "productivity_score": row["productivity_score"]
+                    }
+                    data["cards"].append(card_data)
+                
+                # 导出设置
+                cursor = conn.execute("SELECT key, value FROM settings")
+                for row in cursor.fetchall():
+                    if row["key"] != "api_key":  # 不导出敏感信息
+                        data["settings"][row["key"]] = row["value"]
+            
+            # 写入文件
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            QMessageBox.information(
+                self, "导出成功", 
+                f"已导出 {len(data['cards'])} 条活动记录\n保存到: {file_path}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", f"导出数据时出错: {e}")
+    
+    def _import_data(self):
+        """导入数据"""
+        import json
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入数据",
+            "",
+            "JSON 文件 (*.json)"
+        )
+        
+        if not file_path:
+            return
+        
+        reply = QMessageBox.question(
+            self, "确认导入",
+            "导入数据会与现有数据合并，重复的记录会被跳过。\n是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            imported_count = 0
+            skipped_count = 0
+            
+            with self.storage._get_connection() as conn:
+                for card in data.get("cards", []):
+                    # 检查是否已存在（根据时间判断）
+                    cursor = conn.execute(
+                        "SELECT id FROM timeline_cards WHERE start_time = ? AND end_time = ?",
+                        (card["start_time"], card["end_time"])
+                    )
+                    if cursor.fetchone():
+                        skipped_count += 1
+                        continue
+                    
+                    # 插入新记录
+                    conn.execute("""
+                        INSERT INTO timeline_cards 
+                        (category, title, summary, start_time, end_time, 
+                         app_sites_json, distractions_json, productivity_score)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        card["category"],
+                        card["title"],
+                        card["summary"],
+                        card["start_time"],
+                        card["end_time"],
+                        card.get("app_sites_json", "[]"),
+                        card.get("distractions_json", "[]"),
+                        card.get("productivity_score", 0)
+                    ))
+                    imported_count += 1
+                
+                # 导入设置（可选）
+                for key, value in data.get("settings", {}).items():
+                    if key not in ["api_key", "theme"]:  # 保留用户当前设置
+                        conn.execute(
+                            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                            (key, value)
+                        )
+            
+            QMessageBox.information(
+                self, "导入完成",
+                f"成功导入 {imported_count} 条记录\n跳过 {skipped_count} 条重复记录"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", f"导入数据时出错: {e}")
 
 
 class MainWindow(QMainWindow):
@@ -440,6 +636,7 @@ class MainWindow(QMainWindow):
         self.recording_manager = None
         self.analysis_manager = None
         self._stopping = False  # 防止重复点击停止按钮
+        self._quitting = False  # 标记是否正在退出应用
         
         self._setup_window()
         self._setup_ui()
@@ -771,28 +968,28 @@ class MainWindow(QMainWindow):
         """更新录制按钮状态"""
         t = get_theme()
         if recording:
-            self.record_btn.setText("停止录制")
+            self.record_btn.setText("⏹ 停止录制")
             self.record_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {t.error};
                     color: white;
                     border: none;
-                    border-radius: 8px;
+                    border-radius: 12px;
                     font-size: 14px;
                     font-weight: 600;
                 }}
                 QPushButton:hover {{
-                    opacity: 0.9;
+                    background-color: #FF6961;
                 }}
             """)
         else:
-            self.record_btn.setText("开始录制")
+            self.record_btn.setText("● 开始录制")
             self.record_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {t.accent};
                     color: white;
                     border: none;
-                    border-radius: 8px;
+                    border-radius: 12px;
                     font-size: 14px;
                     font-weight: 600;
                 }}
@@ -831,7 +1028,7 @@ class MainWindow(QMainWindow):
                 background-color: {t.bg_tertiary};
                 color: {t.text_primary};
                 border: none;
-                border-radius: 8px;
+                border-radius: 10px;
                 font-size: 13px;
             }}
             QPushButton:hover {{
@@ -849,7 +1046,7 @@ class MainWindow(QMainWindow):
                 background-color: transparent;
                 color: {t.text_muted};
                 border: none;
-                border-radius: 6px;
+                border-radius: 8px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -950,6 +1147,8 @@ class MainWindow(QMainWindow):
     
     def _quit_app(self):
         """退出应用"""
+        self._quitting = True  # 标记正在退出
+        
         # 停止录制
         if self.recording_manager and self.recording_manager.is_recording:
             self.recording_manager.stop_recording()
@@ -960,12 +1159,17 @@ class MainWindow(QMainWindow):
         QApplication.quit()
     
     def closeEvent(self, event):
-        """窗口关闭事件 - 最小化到托盘"""
-        event.ignore()
-        self.hide()
-        self.tray_icon.showMessage(
-            "Dayflow",
-            "应用已最小化到系统托盘",
-            QSystemTrayIcon.Information,
-            2000
-        )
+        """窗口关闭事件 - 最小化到托盘或退出"""
+        if self._quitting:
+            # 真正退出，接受关闭事件
+            event.accept()
+        else:
+            # 最小化到托盘
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                "Dayflow",
+                "应用已最小化到系统托盘",
+                QSystemTrayIcon.Information,
+                2000
+            )

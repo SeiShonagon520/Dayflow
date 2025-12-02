@@ -7,9 +7,9 @@ from typing import List, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QFrame, QSizePolicy, QProgressBar, QGraphicsDropShadowEffect,
-    QPushButton, QFileDialog
+    QPushButton, QFileDialog, QLineEdit
 )
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QPainter, QBrush
 
 from core.types import ActivityCard
@@ -43,12 +43,13 @@ def get_category_color(category: str) -> str:
 
 
 class StatsSummaryWidget(QFrame):
-    """统计汇总组件 - 显示时间分布"""
+    """统计汇总组件 - 显示时间分布（可折叠）"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = {}  # category -> minutes
         self._total_minutes = 0
+        self._collapsed = False
         self._setup_ui()
         self.apply_theme()
         get_theme_manager().theme_changed.connect(self.apply_theme)
@@ -60,7 +61,7 @@ class StatsSummaryWidget(QFrame):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(12)
         
-        # 标题
+        # 标题栏（可点击折叠）
         title_layout = QHBoxLayout()
         self.title_label = QLabel("📊 时间分布")
         title_layout.addWidget(self.title_label)
@@ -68,12 +69,31 @@ class StatsSummaryWidget(QFrame):
         self.total_label = QLabel("0h 0m")
         title_layout.addWidget(self.total_label)
         title_layout.addStretch()
+        
+        # 折叠按钮
+        self.collapse_btn = QPushButton("▼")
+        self.collapse_btn.setFixedSize(28, 28)
+        self.collapse_btn.setCursor(Qt.PointingHandCursor)
+        self.collapse_btn.clicked.connect(self._toggle_collapse)
+        title_layout.addWidget(self.collapse_btn)
+        
         layout.addLayout(title_layout)
         
-        # 图表区域
-        self.chart_container = QVBoxLayout()
+        # 图表容器（用于折叠）
+        self.chart_widget = QWidget()
+        self.chart_container = QVBoxLayout(self.chart_widget)
+        self.chart_container.setContentsMargins(0, 0, 0, 0)
         self.chart_container.setSpacing(8)
-        layout.addLayout(self.chart_container)
+        layout.addWidget(self.chart_widget)
+    
+    def _toggle_collapse(self):
+        """切换折叠状态"""
+        self._collapsed = not self._collapsed
+        self.chart_widget.setVisible(not self._collapsed)
+        self.collapse_btn.setText("▶" if self._collapsed else "▼")
+        
+        # 更新按钮提示
+        self.collapse_btn.setToolTip("展开" if self._collapsed else "折叠")
     
     def apply_theme(self):
         """应用主题"""
@@ -93,6 +113,21 @@ class StatsSummaryWidget(QFrame):
         self.total_label.setStyleSheet(f"""
             font-size: 13px;
             color: {t.text_muted};
+        """)
+        # 折叠按钮样式 - 更明显
+        self.collapse_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.bg_tertiary};
+                color: {t.text_primary};
+                border: 1px solid {t.border};
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {t.bg_hover};
+                border-color: {t.accent};
+            }}
         """)
         
         # 重新生成图表以应用新主题
@@ -237,10 +272,10 @@ class ActivityCardWidget(QFrame):
         category_color = get_category_color(self.card.category)
         category_label.setStyleSheet(f"""
             QLabel#categoryLabel {{
-                background-color: {category_color}20;
+                background-color: {category_color}18;
                 color: {category_color};
-                padding: 4px 10px;
-                border-radius: 4px;
+                padding: 5px 12px;
+                border-radius: 6px;
                 font-size: 12px;
                 font-weight: 600;
             }}
@@ -326,24 +361,24 @@ class ActivityCardWidget(QFrame):
             apps_layout.addStretch()
             layout.addLayout(apps_layout)
         
-        # 卡片样式
+        # 卡片样式 - Apple 风格大圆角
         self.setStyleSheet(f"""
             QFrame#activityCard {{
                 background-color: {t.bg_secondary};
                 border: 1px solid {t.border};
-                border-radius: 12px;
+                border-radius: 16px;
             }}
             QFrame#activityCard:hover {{
                 background-color: {t.bg_hover};
-                border-color: {t.border_hover};
+                border-color: {t.accent};
             }}
         """)
         
-        # 添加阴影效果
+        # 添加柔和阴影效果
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 0, 0, 40 if t.name == "dark" else 20))
-        shadow.setOffset(0, 4)
+        shadow.setBlurRadius(24)
+        shadow.setColor(QColor(0, 0, 0, 30 if t.name == "dark" else 15))
+        shadow.setOffset(0, 6)
         self.setGraphicsEffect(shadow)
     
     def _format_time_range(self) -> str:
@@ -554,7 +589,16 @@ class TimelineView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cards: List[ActivityCard] = []
+        self._filtered_cards: List[ActivityCard] = []
         self._current_date = datetime.now()
+        self._search_text = ""
+        
+        # 搜索防抖定时器
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._do_search)
+        self._pending_search = ""
+        
         self._setup_ui()
         self.apply_theme()
         get_theme_manager().theme_changed.connect(self.apply_theme)
@@ -569,6 +613,19 @@ class TimelineView(QWidget):
         self.header.date_changed.connect(self._on_date_changed)
         self.header.export_clicked.connect(self._on_export_clicked)
         main_layout.addWidget(self.header)
+        
+        # 搜索栏
+        search_container = QWidget()
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(24, 12, 24, 12)
+        
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 搜索活动标题或摘要...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self._on_search_changed)
+        search_layout.addWidget(self.search_input)
+        
+        main_layout.addWidget(search_container)
         
         # 统计汇总（带边距）
         stats_container = QWidget()
@@ -607,9 +664,58 @@ class TimelineView(QWidget):
             padding: 60px;
         """)
         
+        # 搜索框样式
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {t.bg_secondary};
+                border: 1px solid {t.border};
+                border-radius: 10px;
+                padding: 10px 16px;
+                font-size: 14px;
+                color: {t.text_primary};
+            }}
+            QLineEdit:focus {{
+                border-color: {t.accent};
+                background-color: {t.bg_primary};
+            }}
+            QLineEdit::placeholder {{
+                color: {t.text_muted};
+            }}
+        """)
+        
         # 重新创建卡片以应用新主题
         if self._cards:
             self._refresh_cards()
+    
+    def _on_search_changed(self, text: str):
+        """搜索文本变化 - 使用防抖"""
+        self._pending_search = text.strip().lower()
+        # 300ms 防抖，避免频繁刷新
+        self._search_timer.start(300)
+    
+    def _do_search(self):
+        """执行搜索"""
+        self._search_text = self._pending_search
+        self._refresh_cards()
+    
+    def _get_filtered_cards(self) -> List[ActivityCard]:
+        """获取过滤后的卡片"""
+        if not self._search_text:
+            return self._cards
+        
+        filtered = []
+        for card in self._cards:
+            # 搜索标题和摘要
+            title = (card.title or "").lower()
+            summary = (card.summary or "").lower()
+            category = (card.category or "").lower()
+            
+            if (self._search_text in title or 
+                self._search_text in summary or 
+                self._search_text in category):
+                filtered.append(card)
+        
+        return filtered
     
     def set_cards(self, cards: List[ActivityCard]):
         """设置卡片列表"""
@@ -623,40 +729,46 @@ class TimelineView(QWidget):
         self._update_empty_state()
     
     def _refresh_cards(self, scroll_to_bottom: bool = False):
-        """刷新所有卡片"""
+        """刷新所有卡片 - 优化版本"""
         # 保存当前滚动位置
         scrollbar = self.scroll.verticalScrollBar()
         was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 50
         old_scroll_value = scrollbar.value()
         
-        # 清除现有卡片
-        while self.cards_layout.count() > 1:  # 保留 stretch
-            item = self.cards_layout.takeAt(0)
-            if item.widget() and item.widget() != self.empty_label:
-                item.widget().deleteLater()
+        # 暂停界面更新，减少重绘
+        self.cards_container.setUpdatesEnabled(False)
         
-        # 添加新卡片
-        for card in self._cards:
-            self._add_card_widget(card, animate=False)
+        try:
+            # 清除现有卡片
+            while self.cards_layout.count() > 1:  # 保留 stretch
+                item = self.cards_layout.takeAt(0)
+                if item.widget() and item.widget() != self.empty_label:
+                    item.widget().deleteLater()
+            
+            # 获取过滤后的卡片
+            filtered_cards = self._get_filtered_cards()
+            
+            # 批量添加新卡片
+            for card in filtered_cards:
+                self._add_card_widget(card, animate=False)
+            
+            self._update_empty_state(filtered_cards)
+            self._update_stats()
+            
+            # 更新统计图表
+            self.stats_widget.set_data(self._cards)
+        finally:
+            # 恢复界面更新
+            self.cards_container.setUpdatesEnabled(True)
         
-        self._update_empty_state()
-        self._update_stats()
+        # 使用单次定时器恢复滚动位置
+        def restore_scroll():
+            if scroll_to_bottom or was_at_bottom:
+                scrollbar.setValue(scrollbar.maximum())
+            else:
+                scrollbar.setValue(min(old_scroll_value, scrollbar.maximum()))
         
-        # 更新统计图表
-        self.stats_widget.set_data(self._cards)
-        
-        # 恢复滚动位置（延迟执行以等待布局完成）
-        from PySide6.QtCore import QTimer
-        from PySide6.QtWidgets import QApplication
-        
-        # 先处理待处理事件
-        QApplication.processEvents()
-        
-        # 立即尝试恢复滚动
-        if scroll_to_bottom or was_at_bottom:
-            scrollbar.setValue(scrollbar.maximum())
-        else:
-            scrollbar.setValue(min(old_scroll_value, scrollbar.maximum()))
+        QTimer.singleShot(10, restore_scroll)
     
     def _add_card_widget(self, card: ActivityCard, animate: bool = True):
         """添加卡片组件"""
@@ -666,9 +778,19 @@ class TimelineView(QWidget):
         # 插入到 stretch 之前
         self.cards_layout.insertWidget(self.cards_layout.count() - 1, widget)
     
-    def _update_empty_state(self):
+    def _update_empty_state(self, cards: List[ActivityCard] = None):
         """更新空状态显示"""
-        self.empty_label.setVisible(len(self._cards) == 0)
+        if cards is None:
+            cards = self._cards
+        
+        if len(cards) == 0:
+            if self._search_text:
+                self.empty_label.setText("未找到匹配的活动")
+            else:
+                self.empty_label.setText("开始录制以生成时间轴")
+            self.empty_label.setVisible(True)
+        else:
+            self.empty_label.setVisible(False)
     
     def _update_stats(self):
         """更新统计信息"""

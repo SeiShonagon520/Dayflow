@@ -808,15 +808,16 @@ class StatsPanel(QWidget):
         """应用主题"""
         t = get_theme()
         
-        # 按钮样式
+        # 按钮样式 - Apple 风格
         btn_style = f"""
             QPushButton {{
                 background-color: {t.bg_secondary};
                 color: {t.text_primary};
                 border: 1px solid {t.border};
-                border-radius: 6px;
-                padding: 6px 16px;
+                border-radius: 10px;
+                padding: 8px 20px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QPushButton:hover {{
                 background-color: {t.bg_hover};
@@ -830,12 +831,12 @@ class StatsPanel(QWidget):
         self.week_btn.setStyleSheet(btn_style)
         self.month_btn.setStyleSheet(btn_style)
         
-        # 分区样式
+        # 分区样式 - Apple 风格大圆角
         self.setStyleSheet(f"""
             QFrame#statsSection {{
                 background-color: {t.bg_secondary};
                 border: 1px solid {t.border};
-                border-radius: 12px;
+                border-radius: 16px;
             }}
             QLabel {{
                 color: {t.text_primary};
