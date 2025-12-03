@@ -82,6 +82,33 @@
 
 *Statistics: View weekly/monthly time distribution and productivity trends*
 
+### 📧 Email Report Feature
+
+#### Settings Panel
+
+![Email Settings](assets/Dayflow_Email_Settings.png)
+
+*Email Push Settings: Configure QQ email address and authorization code, with test send support*
+
+#### Email Report Examples
+
+<div align="center">
+<img src="assets/Dayflow_Email_Report_1.png" width="45%" alt="Report Example 1"/>
+<img src="assets/Dayflow_Email_Report_2.png" width="45%" alt="Report Example 2"/>
+</div>
+
+*Daily Productivity Report: Time statistics, category distribution, and AI personalized feedback (different scenarios)*
+
+#### Feature Highlights
+
+| Feature | Description |
+|---------|-------------|
+| ⏰ **Scheduled Push** | Auto-send reports at 12:00 and 22:00 daily |
+| 📊 **Data Summary** | Total tracked time and efficiency score at a glance |
+| 📈 **Category Stats** | Visual breakdown of time spent by category |
+| 🤖 **AI Feedback** | Personalized suggestions based on daily performance |
+| 💬 **Friendly Tone** | Warm encouragement, like a friend caring about your productivity |
+
 ### Interface Guide
 
 | Area | Function |
