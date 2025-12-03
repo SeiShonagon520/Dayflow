@@ -337,6 +337,18 @@ This project is licensed under **Creative Commons Attribution-NonCommercial-Shar
 
 ---
 
+## ⭐ Star History
+
+<a href="https://star-history.com/#SeiShonagon520/Dayflow&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=SeiShonagon520/Dayflow&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=SeiShonagon520/Dayflow&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=SeiShonagon520/Dayflow&type=Date" />
+ </picture>
+</a>
+
+---
+
 <div align="center">
 
 **If you find this useful, please give it a ⭐ Star!**

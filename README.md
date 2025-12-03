@@ -337,6 +337,18 @@ Dayflow 高度重视用户隐私，采用多层保护机制确保数据安全：
 
 ---
 
+## ⭐ Star 历史
+
+<a href="https://star-history.com/#SeiShonagon520/Dayflow&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=SeiShonagon520/Dayflow&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=SeiShonagon520/Dayflow&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=SeiShonagon520/Dayflow&type=Date" />
+ </picture>
+</a>
+
+---
+
 <div align="center">
 
 **如果觉得有用，请给个 ⭐ Star！**
