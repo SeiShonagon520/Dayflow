@@ -492,7 +492,7 @@ class SettingsPanel(QWidget):
         # === 邮件推送设置 ===
         email_frame, email_layout = self._create_card(layout)
         self._create_title("📧 邮件推送", email_layout)
-        self._create_desc("每日 12:00 和 22:00 自动发送效率报告", email_layout)
+        self._create_desc("自动发送效率报告到您的邮箱", email_layout)
         
         # 启用开关行
         enable_row = QHBoxLayout()
@@ -509,6 +509,17 @@ class SettingsPanel(QWidget):
         self.email_enable_btn.clicked.connect(self._toggle_email)
         enable_row.addWidget(self.email_enable_btn)
         email_layout.addLayout(enable_row)
+        
+        # 发送时间配置
+        send_time_label = QLabel("发送时间（可配置多个，用逗号分隔，如 12:00,22:00）")
+        send_time_label.setObjectName("inputLabel")
+        self._descs.append(send_time_label)
+        email_layout.addWidget(send_time_label)
+        
+        self.email_send_times_input = QLineEdit()
+        self.email_send_times_input.setPlaceholderText("12:00,22:00")
+        self.email_send_times_input.setMinimumHeight(40)
+        email_layout.addWidget(self.email_send_times_input)
         
         # 邮箱输入区域（使用网格布局更紧凑）
         email_grid = QVBoxLayout()
@@ -987,6 +998,10 @@ class SettingsPanel(QWidget):
         email_enabled = self.storage.get_setting("email_enabled", "false") == "true"
         self.email_enable_btn.setChecked(email_enabled)
         self._update_email_button()
+        
+        # 加载邮件发送时间配置
+        send_times = self.storage.get_setting("email_send_times", "12:00,22:00")
+        self.email_send_times_input.setText(send_times)
     
     def _save_api_config(self):
         """保存 API 配置"""
@@ -1275,6 +1290,24 @@ class SettingsPanel(QWidget):
         auth = self.email_auth_input.text().strip()
         receiver = self.email_receiver_input.text().strip()
         enabled = self.email_enable_btn.isChecked()
+        send_times = self.email_send_times_input.text().strip() or "12:00,22:00"
+        
+        # 验证发送时间格式
+        try:
+            times_list = []
+            for t in send_times.split(","):
+                t = t.strip()
+                if t:
+                    parts = t.split(":")
+                    hour = int(parts[0])
+                    minute = int(parts[1]) if len(parts) > 1 else 0
+                    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                        raise ValueError(f"无效时间: {t}")
+                    times_list.append(f"{hour:02d}:{minute:02d}")
+            send_times = ",".join(times_list) if times_list else "12:00,22:00"
+        except Exception as e:
+            QMessageBox.warning(self, "时间格式错误", f"发送时间格式不正确: {e}\n请使用 HH:MM 格式，多个时间用逗号分隔")
+            return
         
         # 验证
         if enabled and (not sender or not auth or not receiver):
@@ -1286,6 +1319,7 @@ class SettingsPanel(QWidget):
         self.storage.set_setting("email_auth", auth)
         self.storage.set_setting("email_receiver", receiver)
         self.storage.set_setting("email_enabled", "true" if enabled else "false")
+        self.storage.set_setting("email_send_times", send_times)
         
         QMessageBox.information(self, "成功", "邮件配置已保存")
     
@@ -2316,9 +2350,20 @@ class MainWindow(QMainWindow):
         
         email_service = EmailService(email_config)
         report_generator = ReportGenerator(self.storage)
-        self.email_scheduler = EmailScheduler(email_service, report_generator)
         
-        logger.info("邮件调度器已初始化")
+        # 创建增强版 EmailScheduler，传入 storage 和 tray_icon
+        self.email_scheduler = EmailScheduler(
+            email_service=email_service,
+            report_generator=report_generator,
+            storage=self.storage,
+            config_manager=getattr(self, 'config_manager', None),
+            tray_icon=self.tray_icon
+        )
+        
+        # 应用启动时检查错过的报告
+        self.email_scheduler.on_app_start()
+        
+        logger.info("邮件调度器已初始化（增强版）")
     
     def _check_email_schedule(self):
         """检查是否需要发送定时邮件"""

@@ -33,6 +33,9 @@ env/
 *.swo
 *~
 
+# Kiro specs (local development only)
+.kiro/
+
 # Project local data (privacy)
 *.db
 *.sqlite
@@ -67,5 +70,5 @@ desktop.ini
 test_*.mp4
 *.test.py
 
-# PyInstaller
-*.spec
+# PyInstaller (keep .spec file for reproducible builds)
+# *.spec

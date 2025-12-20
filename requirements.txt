@@ -16,3 +16,7 @@ httpx[http2]>=0.25.0
 
 # Utilities
 numpy>=1.24.0
+
+# Testing
+pytest>=7.4.0
+hypothesis>=6.92.0

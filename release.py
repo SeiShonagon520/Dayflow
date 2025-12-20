@@ -1,10 +1,55 @@
 """
 Dayflow Release Script - 一键打包并发布到 GitHub
 
+================================================================================
+AI 发布指南 (重要！)
+================================================================================
+
+发布新版本的正确步骤：
+
+1. 修改 config.py 中的 VERSION（如 "1.4.0" -> "1.5.0"）
+
+2. 创建 release_notes.md 文件，内容示例：
+   ```
+   ## Dayflow vX.X.X
+   
+   ### ✨ 新功能
+   - 功能1
+   - 功能2
+   
+   ### 🔧 改进
+   - 改进1
+   
+   ### 📦 安装说明
+   1. 下载 `Dayflow_vX.X.X.zip`
+   2. 解压到任意目录
+   3. 运行 `Dayflow/Dayflow.exe`
+   ```
+
+3. 执行发布命令（在 dayflow conda 环境中）：
+   ```
+   python release.py --notes-file release_notes.md
+   ```
+   
+   或者仅打包不发布：
+   ```
+   python release.py --build-only
+   ```
+
+4. 发布完成后删除 release_notes.md
+
+注意事项：
+- GITHUB_TOKEN 必须设置在环境变量中
+- 不要在命令行用 --notes 传递多行文本（conda run 不支持）
+- 使用 --notes-file 从文件读取发布说明
+
+================================================================================
+
 使用方法:
-    python release.py              # 打包 + 发布
-    python release.py --build-only # 仅打包不发布
-    python release.py --notes "修复了xxx" # 自定义发布说明
+    python release.py                          # 打包 + 发布（使用默认说明）
+    python release.py --build-only             # 仅打包不发布
+    python release.py --notes-file notes.md    # 从文件读取发布说明
+    python release.py --skip-build             # 跳过打包，直接发布
 
 首次使用需要设置 GitHub Token:
     set GITHUB_TOKEN=ghp_xxxxxxxxxxxx
@@ -43,11 +88,8 @@ def run_build() -> bool:
     """运行打包"""
     print_header("🔨 开始打包")
     
-    # 使用 dayflow 环境的 Python
-    python_exe = r"C:\Users\L\anaconda3\envs\dayflow\python.exe"
-    if not Path(python_exe).exists():
-        # 尝试当前 Python
-        python_exe = sys.executable
+    # 使用当前 Python 环境
+    python_exe = sys.executable
     
     result = subprocess.run(
         [python_exe, "build.py"],
@@ -89,27 +131,13 @@ def create_zip() -> Path:
     return zip_path
 
 
-def create_release(zip_path: Path, notes: str = "") -> bool:
-    """创建 GitHub Release"""
-    print_header("🚀 创建 GitHub Release")
-    
-    if not GITHUB_TOKEN:
-        print("❌ 错误: 未设置 GITHUB_TOKEN 环境变量")
-        print("   请运行: set GITHUB_TOKEN=ghp_xxxxxxxxxxxx")
-        print("   获取 Token: https://github.com/settings/tokens")
-        return False
-    
-    tag = f"v{VERSION}"
-    
-    # 默认发布说明
-    if not notes:
-        notes = f"""## Dayflow v{VERSION}
+def get_default_notes() -> str:
+    """获取默认发布说明"""
+    return f"""## Dayflow v{VERSION}
 
 ### ✨ 更新内容
 
-- 支持 OpenAI 兼容 API（可自定义 API 地址、密钥、模型）
-- 自动更新支持 ZIP 压缩包下载
-- 修复若干问题
+- 功能更新和 Bug 修复
 
 ### 📦 安装说明
 
@@ -125,6 +153,23 @@ def create_release(zip_path: Path, notes: str = "") -> bool:
 - 心流 API: `https://apis.iflow.cn/v1`
 - Ollama: `http://localhost:11434/v1`
 """
+
+
+def create_release(zip_path: Path, notes: str = "") -> bool:
+    """创建 GitHub Release"""
+    print_header("🚀 创建 GitHub Release")
+    
+    if not GITHUB_TOKEN:
+        print("❌ 错误: 未设置 GITHUB_TOKEN 环境变量")
+        print("   请运行: set GITHUB_TOKEN=ghp_xxxxxxxxxxxx")
+        print("   获取 Token: https://github.com/settings/tokens")
+        return False
+    
+    tag = f"v{VERSION}"
+    
+    # 使用默认发布说明
+    if not notes:
+        notes = get_default_notes()
     
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -144,7 +189,7 @@ def create_release(zip_path: Path, notes: str = "") -> bool:
     }
     
     try:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=60) as client:
             # 检查 Release 是否已存在
             resp = client.get(
                 f"https://api.github.com/repos/{REPO}/releases/tags/{tag}",
@@ -197,7 +242,8 @@ def create_release(zip_path: Path, notes: str = "") -> bool:
                         **headers,
                         "Content-Type": "application/zip"
                     },
-                    content=f.read()
+                    content=f.read(),
+                    timeout=300  # 上传大文件需要更长超时
                 )
                 resp.raise_for_status()
             
@@ -220,8 +266,9 @@ def main():
     parser = argparse.ArgumentParser(description="Dayflow 发布工具")
     parser.add_argument("--build-only", action="store_true", help="仅打包，不发布")
     parser.add_argument("--skip-build", action="store_true", help="跳过打包，直接发布")
-    parser.add_argument("--notes", type=str, default="", help="自定义发布说明")
-    parser.add_argument("--token", type=str, default="", help="GitHub Token (或设置 GITHUB_TOKEN 环境变量)")
+    parser.add_argument("--notes-file", type=str, default="", help="从文件读取发布说明（推荐）")
+    parser.add_argument("--notes", type=str, default="", help="自定义发布说明（单行）")
+    parser.add_argument("--token", type=str, default="", help="GitHub Token")
     args = parser.parse_args()
     
     # 支持命令行传入 Token
@@ -247,8 +294,20 @@ def main():
         print(f"\n✅ 打包完成: {zip_path}")
         return
     
+    # 读取发布说明
+    notes = ""
+    if args.notes_file:
+        notes_path = Path(args.notes_file)
+        if notes_path.exists():
+            notes = notes_path.read_text(encoding='utf-8')
+            print(f"  从文件读取发布说明: {args.notes_file}")
+        else:
+            print(f"⚠️ 发布说明文件不存在: {args.notes_file}，使用默认说明")
+    elif args.notes:
+        notes = args.notes
+    
     # 发布
-    if not create_release(zip_path, args.notes):
+    if not create_release(zip_path, notes):
         sys.exit(1)
 
 

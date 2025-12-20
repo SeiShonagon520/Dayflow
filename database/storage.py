@@ -16,17 +16,37 @@ from core.types import (
     AnalysisBatch, BatchStatus,
     ActivityCard, AppSite, Distraction
 )
+from database.connection_pool import ConnectionPool, PoolExhaustedError
 
 logger = logging.getLogger(__name__)
 
 
 class StorageManager:
-    """SQLite 数据库管理器 - 带连接缓存"""
+    """SQLite 数据库管理器 - 使用连接池"""
     
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, use_pool: bool = True):
+        """
+        初始化数据库管理器
+        
+        Args:
+            db_path: 数据库文件路径
+            use_pool: 是否使用连接池（默认 True）
+        """
         self.db_path = db_path or config.DATABASE_PATH
-        self._local = threading.local()  # 线程本地存储
+        self._use_pool = use_pool
+        self._pool: Optional[ConnectionPool] = None
+        self._local = threading.local()  # 线程本地存储（兼容模式）
+        
         logger.info(f"数据库路径: {self.db_path}")
+        
+        if use_pool:
+            self._pool = ConnectionPool(
+                db_path=str(self.db_path),
+                max_size=5,
+                timeout=30.0,
+                idle_timeout=300.0
+            )
+        
         self._init_database()
     
     def _init_database(self):
@@ -37,7 +57,7 @@ class StorageManager:
                 conn.executescript(f.read())
     
     def _get_cached_connection(self):
-        """获取线程本地的缓存连接"""
+        """获取线程本地的缓存连接（兼容模式）"""
         if not hasattr(self._local, 'conn') or self._local.conn is None:
             self._local.conn = sqlite3.connect(
                 str(self.db_path),
@@ -52,27 +72,40 @@ class StorageManager:
     
     @contextmanager
     def _get_connection(self):
-        """获取数据库连接上下文 - 使用缓存连接"""
-        conn = self._get_cached_connection()
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        """获取数据库连接上下文"""
+        if self._use_pool and self._pool:
+            # 使用连接池
+            with self._pool.get_connection() as conn:
+                yield conn
+        else:
+            # 兼容模式：使用缓存连接
+            conn = self._get_cached_connection()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     
     def close(self):
         """关闭数据库连接"""
-        if hasattr(self._local, 'conn') and self._local.conn is not None:
-            try:
-                # 最终 checkpoint 确保所有数据写入主数据库文件
-                self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                self._local.conn.close()
-                logger.info("数据库连接已关闭")
-            except Exception as e:
-                logger.error(f"关闭数据库连接失败: {e}")
-            finally:
-                self._local.conn = None
+        if self._use_pool and self._pool:
+            # 关闭连接池
+            self._pool.close_all()
+            self._pool = None
+            logger.info("数据库连接池已关闭")
+        else:
+            # 兼容模式
+            if hasattr(self._local, 'conn') and self._local.conn is not None:
+                try:
+                    # 最终 checkpoint 确保所有数据写入主数据库文件
+                    self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    self._local.conn.close()
+                    logger.info("数据库连接已关闭")
+                except Exception as e:
+                    logger.error(f"关闭数据库连接失败: {e}")
+                finally:
+                    self._local.conn = None
     
     # ==================== Chunks ====================
     

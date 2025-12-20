@@ -19,8 +19,15 @@ if "%GITHUB_TOKEN%"=="" (
     exit /b 1
 )
 
-REM 激活 conda 环境并运行
-call C:\Users\L\anaconda3\Scripts\activate.bat dayflow
-python release.py %*
+REM 检查是否有发布说明文件
+if exist release_notes.md (
+    echo [提示] 检测到 release_notes.md，将使用该文件作为发布说明
+    echo.
+    conda run -n dayflow --no-capture-output python release.py --notes-file release_notes.md %*
+) else (
+    echo [提示] 未检测到 release_notes.md，将使用默认发布说明
+    echo.
+    conda run -n dayflow --no-capture-output python release.py %*
+)
 
 pause

@@ -17,6 +17,10 @@ from PySide6.QtGui import QFont
 
 import config
 from ui.main_window import MainWindow
+from core.log_manager import LogManager
+
+# 全局日志管理器实例
+_log_manager = None
 
 
 def parse_args():
@@ -31,22 +35,23 @@ def parse_args():
 
 
 def setup_logging():
-    """配置日志"""
-    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    log_file = config.APP_DATA_DIR / "dayflow.log"
+    """配置日志（使用 LogManager 实现轮转）"""
+    global _log_manager
     
-    logging.basicConfig(
-        level=logging.INFO,
-        format=log_format,
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler()
-        ]
+    _log_manager = LogManager(
+        log_dir=config.APP_DATA_DIR,
+        log_filename="dayflow.log",
+        max_size_mb=5,
+        backup_count=5,
+        retention_days=30,
+        log_level=logging.INFO
     )
     
-    # 降低第三方库日志级别
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # 配置日志系统
+    _log_manager.setup()
+    
+    # 启动时清理过期日志
+    _log_manager.cleanup_old_logs()
 
 
 def check_pending_update():

@@ -56,7 +56,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| 📧 **Email Reports** | Auto-send productivity reports at 12:00 and 22:00 daily |
+| 📧 **Email Reports** | Auto-send productivity reports with customizable send times |
 | 📋 **Deep Analysis Report** | Professional behavior analysis, bottleneck detection, improvement strategies |
 | 🤖 **AI Comments** | AI-generated personalized daily summary with friendly encouragement |
 | 🔄 **Auto Update** | Check for updates, background download, one-click install |
@@ -67,6 +67,7 @@
 | 📥 **CSV Export** | One-click export activity data to CSV for analysis |
 | ⏸️ **Pause Recording** | Pause when handling private content, resume when done |
 | 🎨 **Theme Switching** | IDE-style dark/light themes with auto-saved preferences |
+| ⚙️ **Configurable Settings** | Customize email times, sample frames, API timeout, and more |
 | 📦 **EXE Packaging** | Build standalone executable, no Python required |
 
 ---
@@ -128,7 +129,8 @@ Professional analysis dimensions:
 
 | Feature | Description |
 |---------|-------------|
-| ⏰ **Scheduled Push** | Auto-send reports at 12:00 and 22:00 daily |
+| ⏰ **Scheduled Push** | Default 12:00 and 22:00, customizable send times |
+| 🔄 **Smart Catch-up** | Auto-sends missed reports after sleep/shutdown |
 | 📊 **Data Summary** | Total time, efficiency score, deep work sessions |
 | 📈 **Category Stats** | Visual breakdown with efficiency comparison |
 | 🎯 **Focus Analysis** | Longest focus, fragmentation ratio, hourly efficiency |
@@ -268,8 +270,9 @@ After building, the `dist/Dayflow/` folder can be copied and shared directly.
 
 1. Go to **Settings** → **Email Push**
 2. Enter your QQ email address and authorization code
-3. Click **Save Config**
-4. Click **Test Send** to verify
+3. Customize send times (default: 12:00 and 22:00)
+4. Click **Save Config**
+5. Click **Test Send** to verify
 
 > 💡 Get auth code: QQ Mail → Settings → Account → POP3/SMTP Service → Generate Authorization Code
 
@@ -277,6 +280,8 @@ After building, the `dist/Dayflow/` folder can be copied and shared directly.
 - 📊 Daily time statistics (total duration, efficiency score)
 - 📈 Time distribution by category
 - 💬 AI-generated personalized feedback and suggestions
+
+**Smart Catch-up**: If your computer was asleep/off during scheduled send time, missed reports will be automatically sent when you start up (within 2 hours).
 
 ### 5️⃣ Auto Start (Optional)
 
@@ -318,13 +323,16 @@ Dayflow/
 │   ├── recorder.py         # Screen capture (dxcam)
 │   ├── llm_provider.py     # AI API integration
 │   ├── analysis.py         # Analysis scheduler
-│   ├── email_service.py    # Email reports + Deep analysis
+│   ├── email_service.py    # Email reports + Deep analysis + Smart catch-up
 │   ├── updater.py          # Version check + Multi-source download
-│   └── autostart.py        # Auto-start management
+│   ├── autostart.py        # Auto-start management
+│   ├── config_manager.py   # Centralized config management
+│   └── log_manager.py      # Log rotation management
 │
 ├── 💾 database/            # Data layer
 │   ├── schema.sql          # Table definitions
-│   └── storage.py          # SQLite management
+│   ├── storage.py          # SQLite management
+│   └── connection_pool.py  # Database connection pool
 │
 ├── 🎨 ui/                  # UI layer
 │   ├── main_window.py      # Main window + Settings panel

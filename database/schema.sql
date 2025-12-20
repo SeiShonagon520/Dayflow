@@ -56,3 +56,18 @@ CREATE INDEX IF NOT EXISTS idx_chunks_start_time ON chunks(start_time);
 CREATE INDEX IF NOT EXISTS idx_batches_status ON analysis_batches(status);
 CREATE INDEX IF NOT EXISTS idx_cards_start_time ON timeline_cards(start_time);
 CREATE INDEX IF NOT EXISTS idx_cards_category ON timeline_cards(category);
+
+
+-- 邮件发送记录表
+CREATE TABLE IF NOT EXISTS email_send_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    period TEXT NOT NULL,  -- 'noon', 'night', 或自定义时间标识
+    send_time TIMESTAMP NOT NULL,
+    success INTEGER NOT NULL DEFAULT 1,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_send_log_period ON email_send_log(period);
+CREATE INDEX IF NOT EXISTS idx_email_send_log_time ON email_send_log(send_time);

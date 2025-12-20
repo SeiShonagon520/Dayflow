@@ -32,6 +32,34 @@ CATEGORY_COLORS = {
 }
 
 
+def normalize_app_name(name: str) -> str:
+    """归一化应用名称，合并同类项（如 chrome.exe / Google Chrome）"""
+    if not name:
+        return "未命名"
+    
+    raw = name.strip()
+    lower = raw.lower()
+    
+    # 去掉常见后缀
+    if lower.endswith(".exe"):
+        lower = lower[:-4]
+    
+    # 规则映射（可后续扩展/配置）
+    if "chrome" in lower:
+        return "Chrome"
+    if "edge" in lower:
+        return "Edge"
+    if "firefox" in lower:
+        return "Firefox"
+    if "cursor" in lower:
+        return "Cursor"
+    if "vscode" in lower or "visual studio code" in lower:
+        return "VS Code"
+    
+    # 默认：首字母大写的原始名，避免丢失信息
+    return raw
+
+
 class BarChartWidget(QWidget):
     """柱状图组件 - 显示每日时间分布"""
     
@@ -617,6 +645,106 @@ class DateCompareWidget(QWidget):
         self._update_comparison()
 
 
+class AppUsageListWidget(QWidget):
+    """应用/网站使用时长榜单"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data: List[Tuple[str, float]] = []  # [(name, minutes)]
+        self._setup_ui()
+        self.apply_theme()
+        get_theme_manager().theme_changed.connect(self.apply_theme)
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        
+        self.rows_container = QVBoxLayout()
+        self.rows_container.setSpacing(8)
+        layout.addLayout(self.rows_container)
+        
+        self.empty_label = QLabel("暂无应用使用数据")
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.empty_label)
+    
+    def set_data(self, data: List[Tuple[str, float]]):
+        """设置应用使用数据（分钟）"""
+        self._data = data
+        self._refresh()
+    
+    def _refresh(self):
+        # 清空旧行
+        while self.rows_container.count():
+            item = self.rows_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        if not self._data:
+            self.empty_label.show()
+            return
+        
+        self.empty_label.hide()
+        t = get_theme()
+        
+        total_minutes = sum(m for _, m in self._data) or 1
+        top_items = self._data[:10]  # 只展示前 10 个
+        
+        for name, minutes in top_items:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(10)
+            
+            name_label = QLabel(name or "未命名")
+            name_label.setFixedWidth(160)
+            name_label.setStyleSheet(f"color: {t.text_primary}; font-size: 12px;")
+            row_layout.addWidget(name_label)
+            
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            percent = minutes / total_minutes * 100
+            bar.setValue(int(percent))
+            bar.setTextVisible(False)
+            bar.setFixedHeight(12)
+            bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background-color: {t.bg_tertiary};
+                    border: none;
+                    border-radius: 6px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {t.accent};
+                    border-radius: 6px;
+                }}
+            """)
+            row_layout.addWidget(bar, 1)
+            
+            time_label = QLabel(self._format_minutes(minutes))
+            time_label.setFixedWidth(70)
+            time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            time_label.setStyleSheet(f"color: {t.text_secondary}; font-size: 12px;")
+            row_layout.addWidget(time_label)
+            
+            container = QWidget()
+            container.setLayout(row_layout)
+            self.rows_container.addWidget(container)
+    
+    def _format_minutes(self, minutes: float) -> str:
+        if minutes >= 60:
+            h = int(minutes // 60)
+            m = int(minutes % 60)
+            return f"{h}h{m:02d}m" if m else f"{h}h"
+        return f"{int(minutes)}m"
+    
+    def apply_theme(self):
+        t = get_theme()
+        self.setStyleSheet("")
+        self.empty_label.setStyleSheet(f"color: {t.text_muted}; font-size: 13px; padding: 8px 0;")
+        # 重新渲染行以应用主题色
+        self._refresh()
+
+
 class StatsPanel(QWidget):
     """数据统计面板 - 主容器"""
     
@@ -694,6 +822,14 @@ class StatsPanel(QWidget):
         
         layout.addWidget(goal_section)
         
+        # ===== 应用/网站使用 =====
+        self.app_section = self._create_section("应用 / 网站使用")
+        # 记录标题 label，便于根据范围动态修改文案
+        self.app_section_title = self.app_section.findChild(QLabel, "sectionTitle")
+        self.app_usage_widget = AppUsageListWidget()
+        self.app_section.layout().addWidget(self.app_usage_widget)
+        layout.addWidget(self.app_section)
+        
         # ===== 日期对比 =====
         compare_section = self._create_section("日期对比")
         
@@ -733,6 +869,14 @@ class StatsPanel(QWidget):
         self._current_range = range_type
         self.week_btn.setChecked(range_type == "week")
         self.month_btn.setChecked(range_type == "month")
+        
+        # 根据时间范围更新应用分区标题文案
+        if self.app_section_title:
+            if range_type == "week":
+                self.app_section_title.setText("本周应用 / 网站使用")
+            else:
+                self.app_section_title.setText("本月应用 / 网站使用")
+        
         self._load_data()
     
     def _load_data(self):
@@ -755,9 +899,10 @@ class StatsPanel(QWidget):
             self.line_chart.setUpdatesEnabled(False)
             
             # 收集每日数据
-            bar_data = []
-            trend_data = []
+            bar_data: List[Dict] = []
+            trend_data: List[Tuple[str, float]] = []
             total_today_minutes = 0
+            app_usage_by_range: Dict[str, float] = {}
             
             for i in range(days - 1, -1, -1):
                 date = today - timedelta(days=i)
@@ -778,6 +923,33 @@ class StatsPanel(QWidget):
                     if card.productivity_score > 0:
                         total_score += card.productivity_score
                         score_count += 1
+                    
+                    # 统计当前时间范围内的应用/网站使用（周/月）
+                    if card.app_sites:
+                        # 先做 duration_seconds 的兜底与归一化，避免与卡片总时长严重不符
+                        card_total_seconds = max(card.duration_minutes, 0) * 60
+                        raw_seconds = [max(getattr(app, "duration_seconds", 0) or 0, 0) for app in card.app_sites]
+                        sum_app_seconds = sum(raw_seconds)
+                        
+                        normalized_seconds: List[float] = []
+                        if card_total_seconds > 0:
+                            if sum_app_seconds <= 0:
+                                # 全为 0：平均分配
+                                per = card_total_seconds / len(card.app_sites)
+                                normalized_seconds = [per] * len(card.app_sites)
+                            else:
+                                # 归一化为与卡片总时长接近
+                                ratio = card_total_seconds / sum_app_seconds
+                                normalized_seconds = [s * ratio for s in raw_seconds]
+                        else:
+                            normalized_seconds = raw_seconds
+                        
+                        for app, sec in zip(card.app_sites, normalized_seconds):
+                            if sec <= 0:
+                                continue
+                            minutes_app = sec / 60
+                            key = normalize_app_name(app.name)
+                            app_usage_by_range[key] = app_usage_by_range.get(key, 0) + minutes_app
                 
                 bar_data.append({
                     "date": date_str,
@@ -797,6 +969,10 @@ class StatsPanel(QWidget):
             
             # 更新目标进度
             self.goal_widget.set_current_hours(total_today_minutes / 60)
+            
+            # 更新应用使用榜单（基于当前时间范围的汇总）
+            sorted_usage = sorted(app_usage_by_range.items(), key=lambda x: x[1], reverse=True)
+            self.app_usage_widget.set_data(sorted_usage)
             
             # 加载保存的目标
             goal = self.storage.get_setting("daily_goal", "8")
@@ -868,6 +1044,7 @@ class StatsPanel(QWidget):
         # 子组件主题
         self.goal_widget.apply_theme()
         self.compare_widget.apply_theme()
+        self.app_usage_widget.apply_theme()
         
         # 触发重绘
         self.bar_chart.update()
