@@ -75,6 +75,24 @@
 
 ### 📋 Changelog
 
+#### v1.5.1 (2024-12)
+
+**📊 Statistics Page Redesign**
+- Brand new dashboard style with refined aesthetics
+- Top metric cards: Total duration, average efficiency, deep work count, activity count
+- Dual-column grid layout: Left charts + Right data panels
+- Donut chart: Category time distribution with hover interaction
+- Line chart upgrade: Gradient fill + Bezier curve smoothing
+- Bar chart upgrade: Gradient colors + Background track
+- Heatmap refined: More compact hourly efficiency display
+- Week comparison: This week vs Last week data comparison
+- Card shadow effects: More layered visual experience
+
+**✏️ Card Editing Feature**
+- Right-click menu to edit/delete activity cards
+- Editable fields: Category, title, summary, efficiency score
+- Click card to enter edit mode directly
+
 #### v1.5.0 (2024-12)
 
 **🪟 Window Tracking Enhancement**
@@ -116,7 +134,20 @@
 
 ![Dayflow Statistics](assets/Dayflow_Statistics.png)
 
-*Statistics: View weekly/monthly time distribution and productivity trends*
+*Statistics: Dashboard-style design with top metric cards + dual-column layout, including donut chart, trend chart, heatmap, week comparison, and more*
+
+Statistics page features:
+
+| Feature | Description |
+|---------|-------------|
+| 📊 **Metric Cards** | Total duration, avg efficiency, deep work count, activities with week comparison |
+| 🍩 **Donut Chart** | Category time distribution visualization with hover details |
+| 📈 **Trend Chart** | Productivity trend line chart with gradient fill + smooth curves |
+| 📊 **Bar Chart** | Daily time distribution with stacked categories |
+| 🔥 **Heatmap** | 24-hour efficiency distribution, quickly identify peak hours |
+| ⚖️ **Week Compare** | This week vs Last week data comparison, spot trends |
+| 🎯 **Daily Goal** | Set daily goals and track completion progress |
+| 📱 **App Ranking** | Most used apps/websites usage time leaderboard |
 
 ### 📊 Web Dashboard
 
