@@ -7,10 +7,11 @@ from typing import List, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QFrame, QSizePolicy, QProgressBar, QGraphicsDropShadowEffect,
-    QPushButton, QFileDialog, QLineEdit
+    QPushButton, QFileDialog, QLineEdit, QDialog, QComboBox,
+    QSpinBox, QMenu, QMessageBox, QTextEdit
 )
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
-from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QPainter, QBrush
+from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QPainter, QBrush, QAction
 
 from core.types import ActivityCard
 from ui.themes import get_theme_manager, get_theme, get_efficiency_color
@@ -40,6 +41,283 @@ CATEGORY_COLORS = {
 def get_category_color(category: str) -> str:
     """获取类别对应的颜色"""
     return CATEGORY_COLORS.get(category, "#78716C")
+
+
+class CardEditDialog(QDialog):
+    """卡片编辑对话框"""
+    
+    card_updated = Signal(object)  # 发送更新后的卡片
+    card_deleted = Signal(int)     # 发送删除的卡片 ID
+    
+    # 可选类别列表
+    CATEGORIES = ["工作", "学习", "编程", "会议", "娱乐", "社交", "休息", "其他"]
+    
+    def __init__(self, card: 'ActivityCard', parent=None):
+        super().__init__(parent)
+        self.card = card
+        self.setWindowTitle("编辑活动")
+        self.setMinimumWidth(450)
+        self.setModal(True)
+        self._setup_ui()
+        self.apply_theme()
+        get_theme_manager().theme_changed.connect(self.apply_theme)
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+        
+        # 时间信息（只读）
+        time_label = QLabel(self._format_time())
+        time_label.setObjectName("timeInfo")
+        layout.addWidget(time_label)
+        
+        # 类别选择
+        cat_layout = QHBoxLayout()
+        cat_label = QLabel("类别")
+        cat_label.setFixedWidth(80)
+        self.category_combo = QComboBox()
+        self.category_combo.addItems(self.CATEGORIES)
+        # 设置当前类别
+        if self.card.category in self.CATEGORIES:
+            self.category_combo.setCurrentText(self.card.category)
+        else:
+            self.category_combo.setCurrentText("其他")
+        cat_layout.addWidget(cat_label)
+        cat_layout.addWidget(self.category_combo)
+        layout.addLayout(cat_layout)
+        
+        # 标题输入
+        title_layout = QHBoxLayout()
+        title_label = QLabel("标题")
+        title_label.setFixedWidth(80)
+        self.title_input = QLineEdit(self.card.title or "")
+        self.title_input.setPlaceholderText("活动标题")
+        title_layout.addWidget(title_label)
+        title_layout.addWidget(self.title_input)
+        layout.addLayout(title_layout)
+        
+        # 摘要输入
+        summary_layout = QVBoxLayout()
+        summary_label = QLabel("摘要")
+        self.summary_input = QTextEdit()
+        self.summary_input.setPlainText(self.card.summary or "")
+        self.summary_input.setPlaceholderText("活动摘要描述")
+        self.summary_input.setMaximumHeight(100)
+        summary_layout.addWidget(summary_label)
+        summary_layout.addWidget(self.summary_input)
+        layout.addLayout(summary_layout)
+        
+        # 生产力评分
+        score_layout = QHBoxLayout()
+        score_label = QLabel("效率评分")
+        score_label.setFixedWidth(80)
+        self.score_spin = QSpinBox()
+        self.score_spin.setRange(0, 100)
+        self.score_spin.setValue(int(self.card.productivity_score))
+        self.score_spin.setSuffix(" %")
+        self.score_spin.setMinimumWidth(120)
+        self.score_spin.setFixedHeight(40)  # 固定高度
+        score_layout.addWidget(score_label)
+        score_layout.addWidget(self.score_spin)
+        score_layout.addStretch()
+        layout.addLayout(score_layout)
+        
+        # 应用列表（只读）
+        if self.card.app_sites:
+            apps_label = QLabel("应用程序")
+            apps_text = ", ".join([app.name for app in self.card.app_sites[:5]])
+            if len(self.card.app_sites) > 5:
+                apps_text += f" (+{len(self.card.app_sites) - 5})"
+            apps_value = QLabel(apps_text)
+            apps_value.setObjectName("appsInfo")
+            apps_value.setWordWrap(True)
+            layout.addWidget(apps_label)
+            layout.addWidget(apps_value)
+        
+        layout.addStretch()
+        
+        # 按钮行
+        btn_layout = QHBoxLayout()
+        
+        # 删除按钮
+        self.delete_btn = QPushButton("🗑️ 删除")
+        self.delete_btn.setCursor(Qt.PointingHandCursor)
+        self.delete_btn.clicked.connect(self._on_delete)
+        btn_layout.addWidget(self.delete_btn)
+        
+        btn_layout.addStretch()
+        
+        # 取消按钮
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.cancel_btn)
+        
+        # 保存按钮
+        self.save_btn = QPushButton("保存")
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.clicked.connect(self._on_save)
+        btn_layout.addWidget(self.save_btn)
+        
+        layout.addLayout(btn_layout)
+    
+    def _format_time(self) -> str:
+        """格式化时间范围"""
+        if self.card.start_time and self.card.end_time:
+            start = self.card.start_time.strftime("%Y-%m-%d %H:%M")
+            end = self.card.end_time.strftime("%H:%M")
+            duration = self.card.duration_minutes
+            if duration >= 60:
+                hours = int(duration // 60)
+                mins = int(duration % 60)
+                dur_str = f"{hours}h {mins}m" if mins else f"{hours}h"
+            else:
+                dur_str = f"{int(duration)}m"
+            return f"🕐 {start} - {end} ({dur_str})"
+        return ""
+    
+    def _on_save(self):
+        """保存修改"""
+        # 更新卡片对象
+        self.card.category = self.category_combo.currentText()
+        self.card.title = self.title_input.text().strip()
+        self.card.summary = self.summary_input.toPlainText().strip()
+        self.card.productivity_score = self.score_spin.value()
+        
+        self.card_updated.emit(self.card)
+        self.accept()
+    
+    def _on_delete(self):
+        """删除卡片"""
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除这条活动记录吗？\n\n「{self.card.title or '未命名活动'}」\n\n此操作不可撤销。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.card_deleted.emit(self.card.id)
+            self.accept()
+    
+    def apply_theme(self):
+        t = get_theme()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {t.bg_primary};
+            }}
+            QLabel {{
+                color: {t.text_primary};
+                font-size: 14px;
+            }}
+            QLabel#timeInfo {{
+                color: {t.text_muted};
+                font-size: 13px;
+                padding: 8px 0;
+            }}
+            QLabel#appsInfo {{
+                color: {t.text_secondary};
+                font-size: 12px;
+                padding: 4px 0;
+            }}
+            QLineEdit, QTextEdit {{
+                background-color: {t.bg_tertiary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 10px;
+                color: {t.text_primary};
+                font-size: 14px;
+            }}
+            QLineEdit:focus, QTextEdit:focus {{
+                border-color: {t.accent};
+            }}
+            QComboBox {{
+                background-color: {t.bg_tertiary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 8px 12px;
+                color: {t.text_primary};
+                font-size: 14px;
+            }}
+            QComboBox:hover {{
+                border-color: {t.accent};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 30px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {t.bg_secondary};
+                border: 1px solid {t.border};
+                selection-background-color: {t.accent_light};
+            }}
+            QSpinBox {{
+                background-color: {t.bg_tertiary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 8px 16px;
+                color: {"#000000" if t.name == "light" else "#FFFFFF"};
+                font-size: 14px;
+                font-weight: 500;
+                font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+                min-width: 80px;
+            }}
+            QSpinBox:focus {{
+                border-color: {t.accent};
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                width: 20px;
+            }}
+        """)
+        
+        # 删除按钮 - 红色
+        self.delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.error};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: #FF6961;
+            }}
+        """)
+        
+        # 取消按钮
+        self.cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.bg_tertiary};
+                color: {t.text_primary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {t.bg_hover};
+            }}
+        """)
+        
+        # 保存按钮 - 强调色
+        self.save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.accent};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {t.accent_hover};
+            }}
+        """)
 
 
 class StatsSummaryWidget(QFrame):
@@ -256,11 +534,15 @@ class ActivityCardWidget(QFrame):
     """单个活动卡片组件"""
     
     clicked = Signal(ActivityCard)
+    edit_requested = Signal(ActivityCard)
+    delete_requested = Signal(int)  # card_id
     
     def __init__(self, card: ActivityCard, parent=None):
         super().__init__(parent)
         self.card = card
         self._setup_ui()
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
     
     def _setup_ui(self):
         t = get_theme()
@@ -452,6 +734,53 @@ class ActivityCardWidget(QFrame):
             }}
         """)
         super().mouseReleaseEvent(event)
+    
+    def _show_context_menu(self, pos):
+        """显示右键菜单"""
+        t = get_theme()
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {t.bg_secondary};
+                border: 1px solid {t.border};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 8px 24px;
+                border-radius: 4px;
+                color: {t.text_primary};
+            }}
+            QMenu::item:selected {{
+                background-color: {t.bg_hover};
+            }}
+        """)
+        
+        # 编辑
+        edit_action = QAction("✏️ 编辑", self)
+        edit_action.triggered.connect(lambda: self.edit_requested.emit(self.card))
+        menu.addAction(edit_action)
+        
+        menu.addSeparator()
+        
+        # 删除
+        delete_action = QAction("🗑️ 删除", self)
+        delete_action.triggered.connect(lambda: self._confirm_delete())
+        menu.addAction(delete_action)
+        
+        menu.exec(self.mapToGlobal(pos))
+    
+    def _confirm_delete(self):
+        """确认删除"""
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除这条活动记录吗？\n\n「{self.card.title or '未命名活动'}」",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.delete_requested.emit(self.card.id)
 
 
 class EmptyStateWidget(QWidget):
@@ -695,6 +1024,8 @@ class TimelineView(QWidget):
     card_selected = Signal(ActivityCard)
     date_changed = Signal(datetime)
     export_requested = Signal(datetime, list)  # 日期, 卡片列表
+    card_updated = Signal(ActivityCard)  # 卡片更新信号
+    card_deleted = Signal(int)  # 卡片删除信号
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -877,10 +1208,41 @@ class TimelineView(QWidget):
     def _add_card_widget(self, card: ActivityCard, animate: bool = True):
         """添加卡片组件"""
         widget = ActivityCardWidget(card)
-        widget.clicked.connect(self.card_selected.emit)
+        widget.clicked.connect(self._on_card_clicked)
+        widget.edit_requested.connect(self._on_edit_card)
+        widget.delete_requested.connect(self._on_delete_card)
         
         # 插入到 stretch 之前
         self.cards_layout.insertWidget(self.cards_layout.count() - 1, widget)
+    
+    def _on_card_clicked(self, card: ActivityCard):
+        """卡片点击 - 打开编辑对话框"""
+        self._on_edit_card(card)
+    
+    def _on_edit_card(self, card: ActivityCard):
+        """打开编辑对话框"""
+        dialog = CardEditDialog(card, self)
+        dialog.card_updated.connect(self._handle_card_updated)
+        dialog.card_deleted.connect(self._handle_card_deleted)
+        dialog.exec()
+    
+    def _on_delete_card(self, card_id: int):
+        """处理删除请求"""
+        self._handle_card_deleted(card_id)
+    
+    def _handle_card_updated(self, card: ActivityCard):
+        """处理卡片更新"""
+        self.card_updated.emit(card)
+        # 刷新显示
+        self._refresh_cards()
+    
+    def _handle_card_deleted(self, card_id: int):
+        """处理卡片删除"""
+        self.card_deleted.emit(card_id)
+        # 从本地列表移除
+        self._cards = [c for c in self._cards if c.id != card_id]
+        # 刷新显示
+        self._refresh_cards()
     
     def _update_empty_state(self, cards: List[ActivityCard] = None):
         """更新空状态显示"""

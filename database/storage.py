@@ -332,6 +332,51 @@ class StorageManager:
             productivity_score=row["productivity_score"]
         )
     
+    def update_card(self, card_id: int, category: str = None, title: str = None, 
+                    summary: str = None, productivity_score: float = None) -> bool:
+        """更新时间轴卡片"""
+        try:
+            with self._get_connection() as conn:
+                # 构建动态更新语句
+                updates = []
+                params = []
+                
+                if category is not None:
+                    updates.append("category = ?")
+                    params.append(category)
+                if title is not None:
+                    updates.append("title = ?")
+                    params.append(title)
+                if summary is not None:
+                    updates.append("summary = ?")
+                    params.append(summary)
+                if productivity_score is not None:
+                    updates.append("productivity_score = ?")
+                    params.append(productivity_score)
+                
+                if not updates:
+                    return False
+                
+                params.append(card_id)
+                sql = f"UPDATE timeline_cards SET {', '.join(updates)} WHERE id = ?"
+                conn.execute(sql, params)
+                logger.info(f"已更新卡片 {card_id}")
+                return True
+        except Exception as e:
+            logger.error(f"更新卡片失败 {card_id}: {e}")
+            return False
+    
+    def delete_card(self, card_id: int) -> bool:
+        """删除时间轴卡片"""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM timeline_cards WHERE id = ?", (card_id,))
+                logger.info(f"已删除卡片 {card_id}")
+                return True
+        except Exception as e:
+            logger.error(f"删除卡片失败 {card_id}: {e}")
+            return False
+    
     # ==================== Settings ====================
     
     def get_setting(self, key: str, default: str = "") -> str:

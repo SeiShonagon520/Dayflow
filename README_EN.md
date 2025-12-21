@@ -73,6 +73,35 @@
 | ⚙️ **Configurable Settings** | Customize email times, sample frames, API timeout, and more |
 | 📦 **EXE Packaging** | Build standalone executable, no Python required |
 
+### 📋 Changelog
+
+#### v1.5.0 (2024-12)
+
+**🪟 Window Tracking Enhancement**
+- New Windows API window tracking, auto-captures real app names and window titles
+- AI analysis combines window info for more accurate recognition
+
+**🎨 UI Improvements**
+- Activity cards now show left-side efficiency indicator (green/orange/gray)
+- Deep work badge: 🔥 icon for activities 60+ minutes
+- Sidebar selected state shows left blue indicator bar
+- Recording status displays real-time duration (HH:MM:SS format)
+- System tray tooltip shows recording status
+- Empty state page with guide icon and text
+- Page title typography optimization (28px/700)
+- Settings page card spacing increased
+
+**🤖 AI Prompt Optimization**
+- Simplified transcription prompts, reduced redundant output
+- Better utilization of window title info for recognition
+- Optimized card generation prompts for better categorization
+- Email comments more natural, less AI-like
+
+**🔧 Data Processing Improvements**
+- Window record time alignment optimization
+- Batch boundary continuity handling
+- Email merge logic optimization (5-minute gap threshold)
+
 ---
 
 ## 🖥️ UI Preview

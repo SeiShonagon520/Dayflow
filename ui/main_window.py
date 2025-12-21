@@ -1985,6 +1985,8 @@ class MainWindow(QMainWindow):
         self.timeline_view.card_selected.connect(self._on_card_selected)
         self.timeline_view.date_changed.connect(self._on_date_changed)
         self.timeline_view.export_requested.connect(self._on_export_requested)
+        self.timeline_view.card_updated.connect(self._on_card_updated)
+        self.timeline_view.card_deleted.connect(self._on_card_deleted)
         self.stack.addWidget(self.timeline_view)
         
         # 统计页面
@@ -2391,7 +2393,29 @@ class MainWindow(QMainWindow):
     def _on_card_selected(self, card: ActivityCard):
         """卡片被点击"""
         logger.info(f"卡片被点击: {card.title}")
-        # TODO: 显示卡片详情
+        # 现在由 TimelineView 内部处理编辑对话框
+    
+    def _on_card_updated(self, card: ActivityCard):
+        """卡片更新"""
+        success = self.storage.update_card(
+            card_id=card.id,
+            category=card.category,
+            title=card.title,
+            summary=card.summary,
+            productivity_score=card.productivity_score
+        )
+        if success:
+            logger.info(f"卡片已更新: {card.id} - {card.title}")
+        else:
+            QMessageBox.warning(self, "更新失败", "无法保存修改，请重试")
+    
+    def _on_card_deleted(self, card_id: int):
+        """卡片删除"""
+        success = self.storage.delete_card(card_id)
+        if success:
+            logger.info(f"卡片已删除: {card_id}")
+        else:
+            QMessageBox.warning(self, "删除失败", "无法删除记录，请重试")
     
     def _on_api_key_saved(self, api_key: str):
         """API Key 保存后"""
