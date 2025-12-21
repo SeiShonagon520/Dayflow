@@ -189,31 +189,36 @@ class SidebarButton(QPushButton):
                 background-color: transparent;
                 color: {t.text_muted};
                 border: none;
-                border-radius: 10px;
+                border-radius: 0px 10px 10px 0px;
                 text-align: left;
                 padding-left: 14px;
                 font-size: 14px;
                 font-weight: 500;
-                margin: 2px 8px;
+                margin: 2px 8px 2px 0px;
             }}
             QPushButton:hover {{
                 background-color: {t.bg_hover};
                 color: {t.text_primary};
             }}
             QPushButton:checked {{
-                background-color: {t.accent};
-                color: #FFFFFF;
+                background-color: {t.accent_light};
+                color: {t.accent};
+                border-left: 3px solid {t.accent};
+                padding-left: 11px;
                 font-weight: 600;
             }}
         """)
 
 
 class RecordingIndicator(QWidget):
-    """录制状态指示器"""
+    """录制状态指示器 - 带实时时长显示"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._recording = False
+        self._paused = False
+        self._start_time = None
+        self._elapsed_seconds = 0
         self._setup_ui()
         get_theme_manager().theme_changed.connect(self._apply_idle_theme)
     
@@ -232,12 +237,32 @@ class RecordingIndicator(QWidget):
         
         layout.addStretch()
         
-        # 闪烁动画
+        # 闪烁动画（脉冲效果）
         self._blink_timer = QTimer(self)
         self._blink_timer.timeout.connect(self._blink)
         self._blink_state = True
         
+        # 时长更新定时器
+        self._duration_timer = QTimer(self)
+        self._duration_timer.timeout.connect(self._update_duration)
+        
         self._apply_idle_theme()
+    
+    def _format_duration(self, seconds: int) -> str:
+        """格式化时长为 HH:MM:SS"""
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    
+    def _update_duration(self):
+        """更新录制时长显示"""
+        if self._recording and not self._paused and self._start_time:
+            from datetime import datetime
+            elapsed = (datetime.now() - self._start_time).total_seconds()
+            self._elapsed_seconds = int(elapsed)
+            duration_str = self._format_duration(self._elapsed_seconds)
+            self.status_label.setText(f"录制中 {duration_str}")
     
     def _apply_idle_theme(self):
         if not self._recording:
@@ -246,32 +271,164 @@ class RecordingIndicator(QWidget):
             self.status_label.setStyleSheet(f"color: {t.text_muted}; font-size: 12px;")
     
     def set_recording(self, recording: bool, paused: bool = False):
+        from datetime import datetime
+        
         self._recording = recording
+        self._paused = paused
         t = get_theme()
         
         if recording and not paused:
+            # 开始录制
+            if self._start_time is None:
+                self._start_time = datetime.now()
+                self._elapsed_seconds = 0
+            
             self.dot.setStyleSheet(f"color: {t.error}; font-size: 10px;")
-            self.status_label.setText("录制中")
-            self.status_label.setStyleSheet(f"color: {t.error}; font-size: 12px;")
+            self.status_label.setText("录制中 00:00:00")
+            self.status_label.setStyleSheet(f"color: {t.error}; font-size: 12px; font-weight: 600;")
             self._blink_timer.start(800)
+            self._duration_timer.start(1000)
+            
         elif recording and paused:
+            # 暂停
+            duration_str = self._format_duration(self._elapsed_seconds)
             self.dot.setStyleSheet(f"color: {t.warning}; font-size: 10px;")
-            self.status_label.setText("已暂停")
+            self.status_label.setText(f"已暂停 {duration_str}")
             self.status_label.setStyleSheet(f"color: {t.warning}; font-size: 12px;")
             self._blink_timer.stop()
+            self._duration_timer.stop()
+            
         else:
+            # 停止
+            self._start_time = None
+            self._elapsed_seconds = 0
             self.dot.setStyleSheet(f"color: {t.text_muted}; font-size: 10px;")
             self.status_label.setText("未录制")
             self.status_label.setStyleSheet(f"color: {t.text_muted}; font-size: 12px;")
             self._blink_timer.stop()
+            self._duration_timer.stop()
     
     def _blink(self):
+        """脉冲动画"""
         t = get_theme()
         self._blink_state = not self._blink_state
         if self._blink_state:
             self.dot.setStyleSheet(f"color: {t.error}; font-size: 10px;")
         else:
-            self.dot.setStyleSheet("color: transparent; font-size: 10px;")
+            self.dot.setStyleSheet(f"color: {t.error}; font-size: 10px; opacity: 0.3;")
+    
+    def get_elapsed_time(self) -> str:
+        """获取当前录制时长字符串"""
+        return self._format_duration(self._elapsed_seconds)
+
+
+class CollapsibleSection(QWidget):
+    """可折叠区域组件"""
+    
+    def __init__(self, title: str, summary: str = "", parent=None):
+        super().__init__(parent)
+        self._title = title
+        self._summary = summary
+        self._collapsed = True  # 默认折叠
+        self._setup_ui()
+        self.apply_theme()
+        get_theme_manager().theme_changed.connect(self.apply_theme)
+    
+    def _setup_ui(self):
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        
+        # 标题栏（可点击）
+        self.header = QFrame()
+        self.header.setCursor(Qt.PointingHandCursor)
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(20, 14, 20, 14)
+        
+        # 折叠图标
+        self.toggle_icon = QLabel("▶")
+        header_layout.addWidget(self.toggle_icon)
+        
+        # 标题
+        self.title_label = QLabel(self._title)
+        header_layout.addWidget(self.title_label)
+        
+        header_layout.addStretch()
+        
+        # 摘要（折叠时显示）
+        self.summary_label = QLabel(self._summary)
+        header_layout.addWidget(self.summary_label)
+        
+        self.main_layout.addWidget(self.header)
+        
+        # 内容区域
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(20, 0, 20, 16)
+        self.content_layout.setSpacing(12)
+        self.content.setVisible(False)  # 默认隐藏
+        
+        self.main_layout.addWidget(self.content)
+        
+        # 点击事件
+        self.header.mousePressEvent = self._on_header_click
+    
+    def _on_header_click(self, event):
+        self.toggle()
+    
+    def toggle(self):
+        """切换折叠状态"""
+        self._collapsed = not self._collapsed
+        self.content.setVisible(not self._collapsed)
+        self.toggle_icon.setText("▼" if not self._collapsed else "▶")
+        self.summary_label.setVisible(self._collapsed)
+    
+    def set_summary(self, summary: str):
+        """更新摘要"""
+        self._summary = summary
+        self.summary_label.setText(summary)
+    
+    def add_widget(self, widget: QWidget):
+        """添加内容组件"""
+        self.content_layout.addWidget(widget)
+    
+    def add_layout(self, layout):
+        """添加布局"""
+        self.content_layout.addLayout(layout)
+    
+    def apply_theme(self):
+        t = get_theme()
+        self.header.setStyleSheet(f"""
+            QFrame {{
+                background-color: {t.bg_secondary};
+                border: 1px solid {t.border};
+                border-radius: 12px;
+            }}
+            QFrame:hover {{
+                background-color: {t.bg_hover};
+            }}
+        """)
+        self.toggle_icon.setStyleSheet(f"""
+            font-size: 12px;
+            color: {t.text_muted};
+            padding-right: 8px;
+        """)
+        self.title_label.setStyleSheet(f"""
+            font-size: 15px;
+            font-weight: 600;
+            color: {t.text_primary};
+        """)
+        self.summary_label.setStyleSheet(f"""
+            font-size: 12px;
+            color: {t.text_muted};
+        """)
+        self.content.setStyleSheet(f"""
+            background-color: {t.bg_secondary};
+            border: 1px solid {t.border};
+            border-top: none;
+            border-radius: 0 0 12px 12px;
+            margin-top: -12px;
+        """)
 
 
 class SettingsPanel(QWidget):
@@ -342,7 +499,7 @@ class SettingsPanel(QWidget):
         scroll_content = QWidget()
         layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
+        layout.setSpacing(20)  # 增加卡片间距
         
         # 页面标题
         self.page_title = QLabel("⚙️ 设置")
@@ -767,9 +924,9 @@ class SettingsPanel(QWidget):
             }}
         """)
         
-        # 页面标题
+        # 页面标题 - 28px, 700
         self.page_title.setStyleSheet(f"""
-            font-size: 22px;
+            font-size: 28px;
             font-weight: 700;
             color: {t.text_primary};
             font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
@@ -1994,6 +2151,7 @@ class MainWindow(QMainWindow):
             self._update_record_button(True)
             self.recording_indicator.set_recording(True)
             self.tray_record_action.setText("⏹ 停止录制")
+            self.tray_icon.setToolTip("Dayflow - 录制中...")
             self.pause_btn.setEnabled(True)
             self.tray_pause_action.setEnabled(True)
             
@@ -2065,6 +2223,7 @@ class MainWindow(QMainWindow):
             self._update_record_button(True)
             self.recording_indicator.set_recording(True)
             self.tray_record_action.setText("⏹ 停止录制")
+            self.tray_icon.setToolTip("Dayflow - 录制中...")
             self.pause_btn.setEnabled(True)
             self.tray_pause_action.setEnabled(True)
     
@@ -2092,6 +2251,7 @@ class MainWindow(QMainWindow):
         self.recording_indicator.set_recording(False)
         self.tray_record_action.setEnabled(True)
         self.tray_record_action.setText("▶ 开始录制")
+        self.tray_icon.setToolTip("Dayflow - 智能时间追踪")
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停")
         self.tray_pause_action.setEnabled(False)
@@ -2115,14 +2275,17 @@ class MainWindow(QMainWindow):
             self.recording_manager.resume_recording()
             self.pause_btn.setText("⏸ 暂停")
             self.tray_pause_action.setText("⏸ 暂停录制")
-            self.recording_indicator.set_recording(True)
+            self.recording_indicator.set_recording(True, paused=False)
+            self.tray_icon.setToolTip("Dayflow - 录制中...")
             logger.info("录制已继续")
         else:
             # 暂停录制
             self.recording_manager.pause_recording()
             self.pause_btn.setText("▶ 继续")
             self.tray_pause_action.setText("▶ 继续录制")
-            self.recording_indicator.set_recording(False)
+            self.recording_indicator.set_recording(True, paused=True)
+            elapsed = self.recording_indicator.get_elapsed_time()
+            self.tray_icon.setToolTip(f"Dayflow - 已暂停 {elapsed}")
             logger.info("录制已暂停")
     
     def _update_record_button(self, recording: bool):

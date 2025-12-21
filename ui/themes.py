@@ -284,6 +284,27 @@ def get_theme_manager() -> ThemeManager:
     return ThemeManager()
 
 
+def get_efficiency_color(score: float, theme: 'Theme' = None) -> str:
+    """根据效率分数获取对应颜色
+    
+    Args:
+        score: 效率分数 (0-100)
+        theme: 主题对象，默认使用当前主题
+    
+    Returns:
+        颜色值字符串
+    """
+    if theme is None:
+        theme = get_theme()
+    
+    if score >= 70:
+        return theme.success  # 绿色 - 高效
+    elif score >= 40:
+        return theme.warning  # 橙色 - 中等
+    else:
+        return theme.text_muted  # 灰色 - 低效
+
+
 def get_theme() -> Theme:
     """获取当前主题"""
     return get_theme_manager().current_theme

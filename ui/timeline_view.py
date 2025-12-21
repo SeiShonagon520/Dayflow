@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, 
 from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QPainter, QBrush
 
 from core.types import ActivityCard
-from ui.themes import get_theme_manager, get_theme
+from ui.themes import get_theme_manager, get_theme, get_efficiency_color
 
 
 # 类别颜色映射
@@ -79,7 +79,7 @@ class StatsSummaryWidget(QFrame):
         
         layout.addLayout(title_layout)
         
-        # 图表容器（用于折叠）
+        # 图表容器（用于折叠）- 详细列表
         self.chart_widget = QWidget()
         self.chart_container = QVBoxLayout(self.chart_widget)
         self.chart_container.setContentsMargins(0, 0, 0, 0)
@@ -268,12 +268,15 @@ class ActivityCardWidget(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setFrameShape(QFrame.StyledPanel)
         
+        # 获取效率颜色
+        efficiency_color = get_efficiency_color(self.card.productivity_score)
+        
         # 主布局
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
         
-        # 顶部：类别标签 + 时间
+        # 顶部：类别标签 + 时间 + 深度工作徽章
         top_layout = QHBoxLayout()
         top_layout.setSpacing(12)
         
@@ -293,6 +296,19 @@ class ActivityCardWidget(QFrame):
         """)
         top_layout.addWidget(category_label)
         
+        # 深度工作徽章 (duration >= 60 分钟)
+        if self.card.duration_minutes >= 60:
+            deep_work_badge = QLabel("🔥 深度工作")
+            deep_work_badge.setStyleSheet(f"""
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF6B6B, stop:1 #FF8E53);
+                color: white;
+                padding: 4px 10px;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: 600;
+            """)
+            top_layout.addWidget(deep_work_badge)
+        
         # 时间范围
         time_str = self._format_time_range()
         time_label = QLabel(time_str)
@@ -310,7 +326,7 @@ class ActivityCardWidget(QFrame):
         if self.card.productivity_score > 0:
             score_label = QLabel(f"⚡ {int(self.card.productivity_score)}%")
             score_label.setStyleSheet(f"""
-                color: {t.success};
+                color: {efficiency_color};
                 font-size: 12px;
                 font-weight: 600;
             """)
@@ -372,16 +388,18 @@ class ActivityCardWidget(QFrame):
             apps_layout.addStretch()
             layout.addLayout(apps_layout)
         
-        # 卡片样式 - Apple 风格大圆角
+        # 卡片样式 - 左侧效率指示条 + 右侧圆角
         self.setStyleSheet(f"""
             QFrame#activityCard {{
                 background-color: {t.bg_secondary};
                 border: 1px solid {t.border};
-                border-radius: 16px;
+                border-left: 4px solid {efficiency_color};
+                border-radius: 0px 16px 16px 0px;
             }}
             QFrame#activityCard:hover {{
                 background-color: {t.bg_hover};
                 border-color: {t.accent};
+                border-left: 4px solid {efficiency_color};
             }}
         """)
         
@@ -411,8 +429,89 @@ class ActivityCardWidget(QFrame):
     
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # 点击缩放动画效果
+            self.setStyleSheet(self.styleSheet().replace("background-color:", "transform: scale(0.98); background-color:"))
             self.clicked.emit(self.card)
         super().mousePressEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        # 恢复原始样式
+        t = get_theme()
+        efficiency_color = get_efficiency_color(self.card.productivity_score)
+        self.setStyleSheet(f"""
+            QFrame#activityCard {{
+                background-color: {t.bg_secondary};
+                border: 1px solid {t.border};
+                border-left: 4px solid {efficiency_color};
+                border-radius: 0px 16px 16px 0px;
+            }}
+            QFrame#activityCard:hover {{
+                background-color: {t.bg_hover};
+                border-color: {t.accent};
+                border-left: 4px solid {efficiency_color};
+            }}
+        """)
+        super().mouseReleaseEvent(event)
+
+
+class EmptyStateWidget(QWidget):
+    """空状态组件 - 显示引导信息"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._setup_ui()
+        self.apply_theme()
+        get_theme_manager().theme_changed.connect(self.apply_theme)
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 60, 40, 60)
+        layout.setSpacing(16)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # 大图标
+        self.icon_label = QLabel("⏱️")
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.icon_label)
+        
+        # 标题
+        self.title_label = QLabel("开始记录你的一天")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.title_label)
+        
+        # 描述
+        self.desc_label = QLabel("点击左侧「开始录制」按钮，Dayflow 将\n自动追踪你的屏幕活动并生成时间轴")
+        self.desc_label.setAlignment(Qt.AlignCenter)
+        self.desc_label.setWordWrap(True)
+        layout.addWidget(self.desc_label)
+    
+    def apply_theme(self):
+        t = get_theme()
+        self.icon_label.setStyleSheet(f"""
+            font-size: 64px;
+            padding: 20px;
+        """)
+        self.title_label.setStyleSheet(f"""
+            font-size: 20px;
+            font-weight: 600;
+            color: {t.text_primary};
+        """)
+        self.desc_label.setStyleSheet(f"""
+            font-size: 14px;
+            color: {t.text_muted};
+            line-height: 1.6;
+        """)
+    
+    def set_search_mode(self, is_search: bool):
+        """切换搜索模式显示"""
+        if is_search:
+            self.icon_label.setText("🔍")
+            self.title_label.setText("未找到匹配的活动")
+            self.desc_label.setText("尝试使用其他关键词搜索")
+        else:
+            self.icon_label.setText("⏱️")
+            self.title_label.setText("开始记录你的一天")
+            self.desc_label.setText("点击左侧「开始录制」按钮，Dayflow 将\n自动追踪你的屏幕活动并生成时间轴")
 
 
 class TimelineHeader(QWidget):
@@ -497,9 +596,9 @@ class TimelineHeader(QWidget):
         self.prev_btn.setStyleSheet(nav_btn_style)
         self.next_btn.setStyleSheet(nav_btn_style)
         
-        # 日期显示
+        # 日期显示 - 28px, 700
         self.date_label.setStyleSheet(f"""
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 700;
             color: {t.text_primary};
             padding: 0 12px;
@@ -661,19 +760,13 @@ class TimelineView(QWidget):
         self.scroll.setWidget(self.cards_container)
         main_layout.addWidget(self.scroll)
         
-        # 空状态提示
-        self.empty_label = QLabel("开始录制以生成时间轴")
-        self.empty_label.setAlignment(Qt.AlignCenter)
-        self.cards_layout.insertWidget(0, self.empty_label)
+        # 空状态组件
+        self.empty_widget = EmptyStateWidget()
+        self.cards_layout.insertWidget(0, self.empty_widget)
     
     def apply_theme(self):
         """应用主题"""
         t = get_theme()
-        self.empty_label.setStyleSheet(f"""
-            font-size: 16px;
-            color: {t.text_muted};
-            padding: 60px;
-        """)
         
         # 搜索框样式
         self.search_input.setStyleSheet(f"""
@@ -753,7 +846,7 @@ class TimelineView(QWidget):
             # 清除现有卡片
             while self.cards_layout.count() > 1:  # 保留 stretch
                 item = self.cards_layout.takeAt(0)
-                if item.widget() and item.widget() != self.empty_label:
+                if item.widget() and item.widget() != self.empty_widget:
                     item.widget().deleteLater()
             
             # 获取过滤后的卡片
@@ -795,13 +888,10 @@ class TimelineView(QWidget):
             cards = self._cards
         
         if len(cards) == 0:
-            if self._search_text:
-                self.empty_label.setText("未找到匹配的活动")
-            else:
-                self.empty_label.setText("开始录制以生成时间轴")
-            self.empty_label.setVisible(True)
+            self.empty_widget.set_search_mode(bool(self._search_text))
+            self.empty_widget.setVisible(True)
         else:
-            self.empty_label.setVisible(False)
+            self.empty_widget.setVisible(False)
     
     def _update_stats(self):
         """更新统计信息"""
