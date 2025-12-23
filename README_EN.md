@@ -75,7 +75,7 @@
 
 ### 📋 Changelog
 
-#### v1.5.1 (2024-12)
+#### v1.5.1 (2025-12)
 
 **📊 Statistics Page Redesign**
 - Brand new dashboard style with refined aesthetics
@@ -93,7 +93,7 @@
 - Editable fields: Category, title, summary, efficiency score
 - Click card to enter edit mode directly
 
-#### v1.5.0 (2024-12)
+#### v1.5.0 (2025-12)
 
 **🪟 Window Tracking Enhancement**
 - New Windows API window tracking, auto-captures real app names and window titles
