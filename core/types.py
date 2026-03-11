@@ -34,6 +34,7 @@ class Observation:
     text: str  # 观察描述
     app_name: Optional[str] = None  # 应用名称
     window_title: Optional[str] = None  # 窗口标题
+    file_hint: Optional[str] = None  # 从窗口标题提取出的文件名/页面名线索
     
     def to_dict(self) -> dict:
         return {
@@ -41,7 +42,8 @@ class Observation:
             "end_ts": self.end_ts,
             "text": self.text,
             "app_name": self.app_name,
-            "window_title": self.window_title
+            "window_title": self.window_title,
+            "file_hint": self.file_hint
         }
     
     @classmethod
@@ -51,7 +53,8 @@ class Observation:
             end_ts=data.get("end_ts", 0),
             text=data.get("text", ""),
             app_name=data.get("app_name"),
-            window_title=data.get("window_title")
+            window_title=data.get("window_title"),
+            file_hint=data.get("file_hint")
         )
 
 

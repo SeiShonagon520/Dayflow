@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import List, Optional, Dict
 from datetime import datetime
+from urllib.parse import unquote
 
 import httpx
 import cv2
@@ -32,7 +33,8 @@ TRANSCRIBE_SYSTEM_PROMPT = """你是屏幕活动分析助手。根据截图和�
 规则：
 - start_ts/end_ts 是相对秒数
 - text 只描述行为（写什么代码、看什么内容、做什么操作），不要写应用名称
-- 参考窗口标题理解上下文（如文件名、网页标题、聊天对象）
+- 优先参考窗口标题里的文件名、网页标题、文档名、聊天对象来提高描述精度
+- 如果能判断具体正在编辑/查看的文件或页面，请在 text 中自然体现
 - 只返回 JSON"""
 
 GENERATE_CARDS_SYSTEM_PROMPT = """你是时间管理助手。根据观察记录生成活动卡片。
@@ -85,6 +87,13 @@ class DayflowBackendProvider:
     心流 API 交互类 (OpenAI 兼容格式)
     使用 Chat Completions 接口进行视频分析
     """
+
+    FILE_HINT_BLACKLIST = {
+        "visual studio code", "cursor", "google chrome", "microsoft edge", "firefox",
+        "wechat", "qq", "telegram", "discord", "notion", "obsidian", "typora",
+        "microsoft word", "microsoft excel", "powerpoint", "outlook",
+        "文件资源管理器", "windows terminal", "powershell", "cmd", "unknown"
+    }
     
     def __init__(
         self,
@@ -185,6 +194,57 @@ class DayflowBackendProvider:
             return ""
 
         return str(message_content)
+
+    def _extract_file_hint(self, window_title: Optional[str], app_name: Optional[str] = None) -> Optional[str]:
+        """从窗口标题中提取较像“文件名/页面标题/文档名”的线索。"""
+        if not window_title:
+            return None
+
+        title = unquote(str(window_title)).strip()
+        if not title:
+            return None
+
+        # 常见编辑器/浏览器标题分隔符
+        candidates = [seg.strip(" -—_|•·[]()") for seg in re.split(r"\s*[\-|—|_|·|•|:：]\s*", title) if seg.strip()]
+        if not candidates:
+            candidates = [title]
+
+        app_name_norm = (app_name or "").strip().lower()
+
+        scored = []
+        for part in candidates:
+            part_norm = part.strip().lower()
+            if not part_norm:
+                continue
+            if len(part_norm) <= 1:
+                continue
+            if part_norm == app_name_norm:
+                continue
+            if part_norm in self.FILE_HINT_BLACKLIST:
+                continue
+
+            score = 0
+            if re.search(r"\.[a-z0-9]{1,8}$", part_norm):
+                score += 4  # 像文件名
+            if any(ch in part for ch in ('/', '\\')):
+                score += 3  # 像路径
+            if re.search(r"[\u4e00-\u9fffA-Za-z0-9].{2,}", part):
+                score += 1
+            if len(part) >= 6:
+                score += 1
+            if 'github' in app_name_norm or 'code' in app_name_norm or 'cursor' in app_name_norm:
+                score += 1
+
+            scored.append((score, part.strip()))
+
+        if not scored:
+            return None
+
+        best_score, best_part = max(scored, key=lambda x: x[0])
+        if best_score < 2:
+            return None
+
+        return best_part[:200]
 
     async def _chat_completion(
         self,
@@ -389,7 +449,8 @@ class DayflowBackendProvider:
                 main_app = max(app_durations, key=app_durations.get)
                 obs.app_name = main_app
                 obs.window_title = app_titles.get(main_app, obs.window_title)
-                logger.debug(f"后处理: [{obs_start:.0f}s-{obs_end:.0f}s] app_name -> {main_app}")
+                obs.file_hint = self._extract_file_hint(obs.window_title, main_app)
+                logger.debug(f"后处理: [{obs_start:.0f}s-{obs_end:.0f}s] app_name -> {main_app}, file_hint -> {obs.file_hint}")
         
         return observations
     
@@ -419,8 +480,15 @@ class DayflowBackendProvider:
         obs_text = "观察记录：\n"
         for obs in observations:
             obs_text += f"- [{obs.start_ts:.0f}s - {obs.end_ts:.0f}s] {obs.text}"
+            extras = []
             if obs.app_name:
-                obs_text += f" (应用: {obs.app_name})"
+                extras.append(f"应用: {obs.app_name}")
+            if obs.file_hint:
+                extras.append(f"文件/页面线索: {obs.file_hint}")
+            elif obs.window_title:
+                extras.append(f"窗口标题: {obs.window_title[:120]}")
+            if extras:
+                obs_text += f" ({'；'.join(extras)})"
             obs_text += "\n"
         
         # 添加时间上下文
@@ -465,7 +533,8 @@ class DayflowBackendProvider:
                         end_ts=float(item.get("end_ts", duration)),
                         text=item.get("text", ""),
                         app_name=item.get("app_name"),
-                        window_title=item.get("window_title")
+                        window_title=item.get("window_title"),
+                        file_hint=item.get("file_hint")
                     )
                     observations.append(obs)
         except json.JSONDecodeError as e:
