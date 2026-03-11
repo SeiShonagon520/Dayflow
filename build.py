@@ -6,6 +6,16 @@ Dayflow 打包脚本
 import subprocess
 import sys
 
+
+def _safe_print(text: str = ""):
+    """在 Windows 控制台编码不一致时尽量避免输出报错。"""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        fallback = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+        print(fallback.encode("ascii", errors="replace").decode("ascii"))
+
+
 def build():
     """打包应用"""
     
@@ -29,27 +39,27 @@ def build():
         "main.py"
     ]
     
-    print("=" * 50)
-    print("  Dayflow 打包工具")
-    print("=" * 50)
-    print()
-    print("正在打包，请稍候...")
-    print()
+    _safe_print("=" * 50)
+    _safe_print("  Dayflow 打包工具")
+    _safe_print("=" * 50)
+    _safe_print()
+    _safe_print("正在打包，请稍候...")
+    _safe_print()
     
     try:
         subprocess.run(args, check=True)
-        print()
-        print("=" * 50)
-        print("  ✅ 打包成功！")
-        print("  输出目录: dist/Dayflow/")
-        print("  运行: dist/Dayflow/Dayflow.exe")
-        print("=" * 50)
+        _safe_print()
+        _safe_print("=" * 50)
+        _safe_print("  打包成功！")
+        _safe_print("  输出目录: dist/Dayflow/")
+        _safe_print("  运行: dist/Dayflow/Dayflow.exe")
+        _safe_print("=" * 50)
     except subprocess.CalledProcessError as e:
-        print(f"❌ 打包失败: {e}")
+        _safe_print(f"打包失败: {e}")
         sys.exit(1)
     except FileNotFoundError:
-        print("❌ 请先安装 PyInstaller:")
-        print("   pip install pyinstaller")
+        _safe_print("请先安装 PyInstaller:")
+        _safe_print("   pip install pyinstaller")
         sys.exit(1)
 
 if __name__ == "__main__":
