@@ -28,8 +28,14 @@ ANALYSIS_MAX_IDLE_INTERVAL = 300  # 无任务时最大扫描间隔（秒）
 WINDOW_TRACKING_ON_CHANGE_ONLY = True  # 仅在窗口变化时记录（减少数据量）
 FRAME_CAPTURE_TIMEOUT = 2.0  # 帧捕获超时（秒）
 
+# 空闲自动暂停配置
+IDLE_PAUSE_ENABLED = True  # 检测到空闲后自动暂停录制
+IDLE_PAUSE_TIMEOUT_SECONDS = 600  # 空闲超时（秒），默认10分钟
+
 # 存储清理配置
 AUTO_DELETE_ANALYZED_CHUNKS = True  # 分析完成后自动删除视频切片（节省磁盘空间）
+CHUNKS_MAX_SIZE_GB = 5  # 缓存上限（GB），超过时自动清理最旧文件
+CUSTOM_CHUNKS_DIR = ""  # 自定义切片路径，空字符串表示使用默认路径
 
 # 性能监控配置（开发/调试用）
 ENABLE_PERFORMANCE_MONITOR = False  # 是否启用性能监控
@@ -52,7 +58,7 @@ def _get_app_data_dir() -> Path:
     return Path.home() / "AppData" / "Local" / "Dayflow"
 
 APP_DATA_DIR = _get_app_data_dir()
-CHUNKS_DIR = APP_DATA_DIR / "chunks"
+CHUNKS_DIR = Path(CUSTOM_CHUNKS_DIR) if CUSTOM_CHUNKS_DIR else APP_DATA_DIR / "chunks"
 DATABASE_PATH = APP_DATA_DIR / "dayflow.db"
 
 # 确保目录存在

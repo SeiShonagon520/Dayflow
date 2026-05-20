@@ -260,6 +260,9 @@ class AnalysisScheduler:
             # 分析完成后删除视频切片文件（节省磁盘空间）
             if config.AUTO_DELETE_ANALYZED_CHUNKS:
                 self._delete_chunk_files(chunks)
+
+            # 基于大小的缓存清理
+            self._cleanup_if_over_limit()
             
         except Exception as e:
             logger.error(f"批次 {batch_id} 处理失败: {e}")
@@ -298,6 +301,44 @@ class AnalysisScheduler:
         
         if deleted_count > 0:
             logger.info(f"已清理 {deleted_count} 个视频切片文件")
+
+    def _cleanup_if_over_limit(self):
+        """当缓存目录超过大小上限时，按时间从旧到新删除文件"""
+        chunks_dir = config.CHUNKS_DIR
+        if not chunks_dir.exists():
+            return
+
+        max_bytes = config.CHUNKS_MAX_SIZE_GB * 1024 ** 3
+
+        try:
+            files = [f for f in chunks_dir.iterdir() if f.is_file()]
+        except Exception as e:
+            logger.warning(f"扫描缓存目录失败: {e}")
+            return
+
+        total_size = sum(f.stat().st_size for f in files)
+        if total_size <= max_bytes:
+            return
+
+        # 按修改时间排序，最旧的在前
+        files.sort(key=lambda f: f.stat().st_size)
+        files.sort(key=lambda f: f.stat().st_mtime)
+
+        deleted_count = 0
+        for f in files:
+            if total_size <= max_bytes:
+                break
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                total_size -= size
+                deleted_count += 1
+                logger.debug(f"缓存清理: 删除 {f.name} ({size / 1024 / 1024:.1f}MB)")
+            except Exception as e:
+                logger.warning(f"缓存清理失败 {f.name}: {e}")
+
+        if deleted_count > 0:
+            logger.info(f"缓存清理完成: 删除 {deleted_count} 个文件，当前大小 {total_size / 1024 / 1024:.0f}MB")
     
     async def process_immediately(self):
         """立即处理所有待分析的切片（手动触发）"""

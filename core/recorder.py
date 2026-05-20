@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Callable, List, Dict
 
+import numpy as np
 import dxcam
 import cv2
 
@@ -40,14 +41,22 @@ class ScreenRecorder:
         self.chunk_duration = chunk_duration or config.CHUNK_DURATION_SECONDS
         self.output_dir = output_dir or config.CHUNKS_DIR
         self.on_chunk_saved = on_chunk_saved
-        self.output_idx = max(0, int(output_idx or 0))
-        
+        self._all_screens = (output_idx == -1)
+        self.output_idx = int(output_idx) if output_idx is not None else 0
+
         # 状态
         self._recording = False
         self._paused = False
         self._camera: Optional[dxcam.DXCamera] = None
         self._record_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+
+        # 多相机模式（全部屏幕）
+        self._cameras: list = []
+        self._output_geometries: list = []
+        self._canvas_shape: Optional[tuple] = None
+        self._canvas_offset_x: int = 0
+        self._canvas_offset_y: int = 0
         
         # 当前切片信息
         self._current_writer: Optional[cv2.VideoWriter] = None
@@ -75,11 +84,13 @@ class ScreenRecorder:
         if self._recording:
             logger.warning("录制已在进行中")
             return
-        
-        logger.info(f"开始屏幕录制... (显示器 output_idx={self.output_idx})")
-        
-        # 初始化 dxcam（带降级重试，避免部分机器/显示器组合直接灾难性失败）
-        self._camera = self._create_camera_with_fallback()
+
+        if self._all_screens:
+            logger.info("开始屏幕录制... (全部屏幕模式)")
+            self._create_all_cameras()
+        else:
+            logger.info(f"开始屏幕录制... (显示器 output_idx={self.output_idx})")
+            self._camera = self._create_camera_with_fallback()
         
         self._recording = True
         self._paused = False
@@ -115,7 +126,16 @@ class ScreenRecorder:
         
         # 释放 dxcam
         try:
-            if self._camera:
+            if self._all_screens:
+                for cam in self._cameras:
+                    try:
+                        del cam
+                    except Exception as e:
+                        logger.error(f"释放相机时出错: {e}")
+                self._cameras = []
+                self._output_geometries = []
+                self._canvas_shape = None
+            elif self._camera:
                 del self._camera
                 self._camera = None
         except Exception as e:
@@ -168,6 +188,89 @@ class ScreenRecorder:
         logger.error(f"{error_message} 最后错误: {last_error}")
         raise RuntimeError(error_message) from last_error
 
+    def _create_all_cameras(self):
+        """为每个已连接的显示器创建 dxcam 相机，计算虚拟桌面画布。"""
+        self._cameras = []
+        self._output_geometries = []
+
+        for output_idx in range(16):
+            try:
+                cam = dxcam.create(
+                    device_idx=0,
+                    output_idx=output_idx,
+                    output_color="BGR",
+                )
+                output_obj = cam._output
+                output_obj.update_desc()
+
+                if not output_obj.attached_to_desktop:
+                    del cam
+                    continue
+
+                coords = output_obj.desc.DesktopCoordinates
+                geom = {
+                    "output_idx": output_idx,
+                    "left": coords.left,
+                    "top": coords.top,
+                    "width": output_obj.resolution[0],
+                    "height": output_obj.resolution[1],
+                }
+                self._cameras.append(cam)
+                self._output_geometries.append(geom)
+                logger.info(
+                    f"  显示器 {output_idx}: {geom['width']}x{geom['height']} "
+                    f"at ({geom['left']}, {geom['top']})"
+                )
+            except Exception as e:
+                logger.debug(f"枚举输出 {output_idx} 结束或失败: {e}")
+                break
+
+        if not self._cameras:
+            raise RuntimeError("未找到任何可用的显示器输出")
+
+        # 计算虚拟桌面边界框
+        min_left = min(g["left"] for g in self._output_geometries)
+        min_top = min(g["top"] for g in self._output_geometries)
+        max_right = max(g["left"] + g["width"] for g in self._output_geometries)
+        max_bottom = max(g["top"] + g["height"] for g in self._output_geometries)
+
+        self._canvas_offset_x = min_left
+        self._canvas_offset_y = min_top
+        canvas_width = max_right - min_left
+        canvas_height = max_bottom - min_top
+        self._canvas_shape = (canvas_height, canvas_width, 3)
+
+        logger.info(
+            f"虚拟桌面: {canvas_width}x{canvas_height}, "
+            f"偏移: ({min_left}, {min_top}), "
+            f"显示器数: {len(self._cameras)}"
+        )
+
+    def _grab_all_screens(self) -> Optional[np.ndarray]:
+        """从所有相机抓取帧并拼接到虚拟桌面画布。"""
+        if not self._cameras or self._canvas_shape is None:
+            return None
+
+        canvas = np.zeros(self._canvas_shape, dtype=np.uint8)
+
+        for cam, geom in zip(self._cameras, self._output_geometries):
+            frame = cam.grab()
+            if frame is None:
+                continue
+
+            x = geom["left"] - self._canvas_offset_x
+            y = geom["top"] - self._canvas_offset_y
+            h = geom["height"]
+            w = geom["width"]
+
+            fh, fw = frame.shape[:2]
+            if fh != h or fw != w:
+                frame = cv2.resize(frame, (w, h))
+
+            canvas[y:y + h, x:x + w] = frame
+
+        return canvas
+
     def _recording_loop(self):
         """录制主循环"""
         frame_interval = 1.0 / self.fps
@@ -190,7 +293,10 @@ class ScreenRecorder:
             
             try:
                 # 捕获屏幕
-                frame = self._camera.grab()
+                if self._all_screens:
+                    frame = self._grab_all_screens()
+                else:
+                    frame = self._camera.grab()
                 if frame is None:
                     time.sleep(0.1)
                     continue
@@ -317,9 +423,9 @@ class ScreenRecorder:
 class RecordingManager:
     """
     录制管理器
-    整合录制器和数据库存储
+    整合录制器和数据库存储，支持空闲自动暂停
     """
-    
+
     def __init__(self, storage_manager=None):
         from database.storage import StorageManager
         self.storage = storage_manager or StorageManager()
@@ -328,7 +434,10 @@ class RecordingManager:
         except Exception:
             output_idx = 0
         self.recorder = ScreenRecorder(on_chunk_saved=self._on_chunk_saved, output_idx=output_idx)
-    
+
+        self._idle_paused = False
+        self._idle_detector = None
+
     def _on_chunk_saved(self, chunk: VideoChunk):
         """切片保存回调 - 写入数据库"""
         try:
@@ -336,27 +445,77 @@ class RecordingManager:
             logger.info(f"切片已入库: ID={chunk_id}")
         except Exception as e:
             logger.error(f"切片入库失败: {e}")
-    
+
     def start_recording(self):
         """开始录制"""
         self.recorder.start()
-    
+        self._start_idle_detector()
+
     def stop_recording(self):
         """停止录制"""
+        self._stop_idle_detector()
         self.recorder.stop()
-    
+
     def pause_recording(self):
-        """暂停录制"""
+        """暂停录制（手动）"""
+        self._idle_paused = False
         self.recorder.pause()
-    
+
     def resume_recording(self):
-        """恢复录制"""
+        """恢复录制（手动）"""
+        self._idle_paused = False
         self.recorder.resume()
-    
+
     @property
     def is_recording(self) -> bool:
         return self.recorder.is_recording
-    
+
     @property
     def is_paused(self) -> bool:
         return self.recorder.is_paused
+
+    @property
+    def is_idle_paused(self) -> bool:
+        return self._idle_paused
+
+    def _start_idle_detector(self):
+        """启动空闲检测"""
+        if not config.IDLE_PAUSE_ENABLED:
+            return
+
+        try:
+            from core.idle_detector import IdleDetector
+            timeout = config.IDLE_PAUSE_TIMEOUT_SECONDS
+            self._idle_detector = IdleDetector(
+                timeout_seconds=timeout,
+                check_interval=5,
+                on_idle=self._on_idle,
+                on_active=self._on_active
+            )
+            self._idle_detector.start()
+        except Exception as e:
+            logger.warning(f"空闲检测启动失败: {e}")
+
+    def _stop_idle_detector(self):
+        """停止空闲检测"""
+        if self._idle_detector:
+            try:
+                self._idle_detector.stop()
+            except Exception as e:
+                logger.warning(f"空闲检测停止失败: {e}")
+            self._idle_detector = None
+        self._idle_paused = False
+
+    def _on_idle(self):
+        """空闲回调 - 自动暂停录制"""
+        if self.recorder.is_recording and not self.recorder.is_paused:
+            self.recorder.pause()
+            self._idle_paused = True
+            logger.info(f"检测到空闲 {config.IDLE_PAUSE_TIMEOUT_SECONDS} 秒，录制已自动暂停")
+
+    def _on_active(self):
+        """活动恢复回调 - 自动恢复录制"""
+        if self._idle_paused:
+            self.recorder.resume()
+            self._idle_paused = False
+            logger.info("检测到活动恢复，录制已自动恢复")

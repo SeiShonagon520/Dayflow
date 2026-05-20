@@ -3,7 +3,9 @@ Dayflow Windows - 主窗口
 现代化 Windows 11 风格界面
 """
 import logging
+import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -11,7 +13,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QStackedWidget, QFrame,
     QLineEdit, QMessageBox, QSystemTrayIcon, QMenu,
     QApplication, QSizePolicy, QSpacerItem, QFileDialog,
-    QScrollArea, QProgressBar, QComboBox
+    QScrollArea, QProgressBar, QComboBox, QSpinBox, QTextBrowser,
+    QDialog, QProgressDialog, QCheckBox
 )
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import QUrl
@@ -21,11 +24,74 @@ from PySide6.QtGui import QIcon, QAction, QFont, QColor, QPalette
 import config
 from ui.timeline_view import TimelineView
 from ui.stats_view import StatsPanel
+from ui.daily_report_view import DailyReportView
 from ui.themes import get_theme_manager, get_theme
 from core.types import ActivityCard
 from database.storage import StorageManager
 
 logger = logging.getLogger(__name__)
+
+
+class DailyReportDialog(QDialog):
+    """日报展示对话框"""
+
+    def __init__(self, date_str: str, content: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"📋 工作日报 - {date_str}")
+        self.setMinimumSize(600, 500)
+        self.resize(700, 600)
+        self.setModal(True)
+        self._content = content
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 内容区
+        self.text_browser = QTextBrowser()
+        self.text_browser.setOpenExternalLinks(True)
+        self.text_browser.setMarkdown(self._content)
+        layout.addWidget(self.text_browser)
+
+        # 按钮区
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        copy_btn = QPushButton("📋 复制到剪贴板")
+        copy_btn.setFixedHeight(34)
+        copy_btn.setCursor(Qt.PointingHandCursor)
+        copy_btn.clicked.connect(self._copy_to_clipboard)
+        btn_layout.addWidget(copy_btn)
+
+        export_btn = QPushButton("💾 导出为文件")
+        export_btn.setFixedHeight(34)
+        export_btn.setCursor(Qt.PointingHandCursor)
+        export_btn.clicked.connect(self._export_to_file)
+        btn_layout.addWidget(export_btn)
+
+        close_btn = QPushButton("关闭")
+        close_btn.setFixedHeight(34)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.clicked.connect(self.close)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _copy_to_clipboard(self):
+        QApplication.clipboard().setText(self._content)
+        QMessageBox.information(self, "成功", "日报内容已复制到剪贴板")
+
+    def _export_to_file(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出日报", f"日报_{self.windowTitle().split(' - ')[-1]}.md",
+            "Markdown 文件 (*.md);;文本文件 (*.txt)"
+        )
+        if file_path:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(self._content)
+            QMessageBox.information(self, "成功", f"日报已导出到：{file_path}")
 
 
 class TitleBarButton(QPushButton):
@@ -634,6 +700,61 @@ class SettingsPanel(QWidget):
         monitor_row.addWidget(self.monitor_combo)
         record_layout.addLayout(monitor_row)
 
+        # 缓存上限
+        cache_row = QHBoxLayout()
+        cache_label = QLabel("缓存上限")
+        cache_label.setObjectName("cardDesc")
+        self._descs.append(cache_label)
+        cache_row.addWidget(cache_label)
+        cache_row.addStretch()
+
+        self.cache_limit_spin = QSpinBox()
+        self.cache_limit_spin.setRange(1, 100)
+        self.cache_limit_spin.setValue(config.CHUNKS_MAX_SIZE_GB)
+        self.cache_limit_spin.setSuffix(" GB")
+        self.cache_limit_spin.setMinimumHeight(34)
+        self.cache_limit_spin.setMinimumWidth(100)
+        cache_row.addWidget(self.cache_limit_spin)
+        record_layout.addLayout(cache_row)
+
+        # 自定义录制路径
+        path_row = QHBoxLayout()
+        path_label = QLabel("录制路径")
+        path_label.setObjectName("cardDesc")
+        self._descs.append(path_label)
+        path_row.addWidget(path_label)
+
+        self.custom_path_input = QLineEdit()
+        self.custom_path_input.setPlaceholderText("留空使用默认路径")
+        self.custom_path_input.setReadOnly(True)
+        self.custom_path_input.setMinimumHeight(34)
+        path_row.addWidget(self.custom_path_input)
+
+        self.path_browse_btn = QPushButton("浏览...")
+        self.path_browse_btn.setCursor(Qt.PointingHandCursor)
+        self.path_browse_btn.setFixedHeight(34)
+        self.path_browse_btn.clicked.connect(self._browse_chunks_dir)
+        path_row.addWidget(self.path_browse_btn)
+        record_layout.addLayout(path_row)
+
+        # 空闲自动暂停
+        idle_row = QHBoxLayout()
+        self.idle_pause_check = QCheckBox("空闲自动暂停")
+        self.idle_pause_check.setChecked(config.IDLE_PAUSE_ENABLED)
+        self.idle_pause_check.stateChanged.connect(self._on_idle_pause_toggled)
+        idle_row.addWidget(self.idle_pause_check)
+        idle_row.addStretch()
+
+        self.idle_timeout_spin = QSpinBox()
+        self.idle_timeout_spin.setRange(1, 120)
+        self.idle_timeout_spin.setValue(config.IDLE_PAUSE_TIMEOUT_SECONDS // 60)
+        self.idle_timeout_spin.setSuffix(" 分钟")
+        self.idle_timeout_spin.setMinimumHeight(34)
+        self.idle_timeout_spin.setMinimumWidth(100)
+        self.idle_timeout_spin.setEnabled(config.IDLE_PAUSE_ENABLED)
+        idle_row.addWidget(self.idle_timeout_spin)
+        record_layout.addLayout(idle_row)
+
         self.monitor_save_btn = QPushButton("保存录制设置")
         self.monitor_save_btn.setCursor(Qt.PointingHandCursor)
         self.monitor_save_btn.setFixedHeight(36)
@@ -1184,13 +1305,22 @@ class SettingsPanel(QWidget):
                 line-height: 1.5;
             }}
         """)
-    
+
+    def _browse_chunks_dir(self):
+        """浏览并选择录制视频存放路径"""
+        current_dir = self.custom_path_input.text() or str(config.CHUNKS_DIR)
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "选择录制视频存放路径", current_dir
+        )
+        if dir_path:
+            self.custom_path_input.setText(dir_path)
+
     def _populate_monitor_options(self):
         """填充显示器选项。"""
         self.monitor_combo.clear()
+        self.monitor_combo.addItem("全部屏幕", -1)
         screens = QApplication.screens()
         if not screens:
-            self.monitor_combo.addItem("显示器 1", 0)
             return
 
         for idx, screen in enumerate(screens):
@@ -1204,7 +1334,58 @@ class SettingsPanel(QWidget):
         if output_idx is None:
             output_idx = 0
         self.storage.set_setting("record_output_idx", str(output_idx))
-        QMessageBox.information(self, "成功", "录制显示器设置已保存，下次开始录制时生效")
+
+        # 保存缓存上限
+        cache_limit = self.cache_limit_spin.value()
+        self.storage.set_setting("chunks_max_size_gb", str(cache_limit))
+        config.CHUNKS_MAX_SIZE_GB = cache_limit
+
+        # 保存自定义录制路径
+        new_path = self.custom_path_input.text().strip()
+        old_path_setting = self.storage.get_setting("custom_chunks_dir", "")
+
+        if new_path != old_path_setting:
+            self.storage.set_setting("custom_chunks_dir", new_path)
+
+            # 路径变更时迁移文件
+            old_dir = config.CHUNKS_DIR
+            new_dir = Path(new_path) if new_path else config.APP_DATA_DIR / "chunks"
+
+            if old_dir.exists() and old_dir != new_dir:
+                new_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    for f in old_dir.iterdir():
+                        if f.is_file():
+                            dest = new_dir / f.name
+                            shutil.move(str(f), str(dest))
+                    # 迁移完成后删除旧目录（如果为空）
+                    try:
+                        old_dir.rmdir()
+                    except OSError:
+                        pass
+                    logger.info(f"录制文件已迁移到: {new_dir}")
+                except Exception as e:
+                    logger.error(f"文件迁移失败: {e}")
+                    QMessageBox.warning(self, "迁移失败", f"文件迁移失败: {e}")
+                    return
+
+            # 更新运行时配置
+            config.CHUNKS_DIR = new_dir
+            config.CUSTOM_CHUNKS_DIR = new_path
+
+        # 保存空闲检测设置
+        idle_enabled = self.idle_pause_check.isChecked()
+        idle_timeout_min = self.idle_timeout_spin.value()
+        self.storage.set_setting("idle_pause_enabled", "1" if idle_enabled else "0")
+        self.storage.set_setting("idle_pause_timeout_min", str(idle_timeout_min))
+        config.IDLE_PAUSE_ENABLED = idle_enabled
+        config.IDLE_PAUSE_TIMEOUT_SECONDS = idle_timeout_min * 60
+
+        QMessageBox.information(self, "成功", "录制设置已保存")
+
+    def _on_idle_pause_toggled(self, state):
+        """空闲暂停开关切换"""
+        self.idle_timeout_spin.setEnabled(state == Qt.Checked)
 
     def _load_settings(self):
         # 加载 API 设置
@@ -1229,7 +1410,27 @@ class SettingsPanel(QWidget):
         combo_index = self.monitor_combo.findData(saved_output_idx)
         if combo_index >= 0:
             self.monitor_combo.setCurrentIndex(combo_index)
-        
+
+        # 加载缓存上限设置
+        saved_cache_limit = self.storage.get_setting("chunks_max_size_gb", str(config.CHUNKS_MAX_SIZE_GB))
+        try:
+            self.cache_limit_spin.setValue(int(saved_cache_limit))
+        except ValueError:
+            self.cache_limit_spin.setValue(config.CHUNKS_MAX_SIZE_GB)
+
+        # 加载自定义录制路径
+        saved_custom_dir = self.storage.get_setting("custom_chunks_dir", "")
+        self.custom_path_input.setText(saved_custom_dir)
+
+        # 加载空闲检测设置
+        saved_idle_enabled = self.storage.get_setting("idle_pause_enabled", "1" if config.IDLE_PAUSE_ENABLED else "0")
+        self.idle_pause_check.setChecked(saved_idle_enabled == "1")
+        saved_idle_timeout = self.storage.get_setting("idle_pause_timeout_min", str(config.IDLE_PAUSE_TIMEOUT_SECONDS // 60))
+        try:
+            self.idle_timeout_spin.setValue(int(saved_idle_timeout))
+        except ValueError:
+            self.idle_timeout_spin.setValue(config.IDLE_PAUSE_TIMEOUT_SECONDS // 60)
+
         # 加载邮件设置
         self.email_sender_input.setText(self.storage.get_setting("email_sender", ""))
         self.email_auth_input.setText(self.storage.get_setting("email_auth", ""))
@@ -1941,11 +2142,14 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        
+
         # 初始化组件
         self.storage = StorageManager()
         self.recording_manager = None
         self.analysis_manager = None
+
+        # 从数据库同步运行时配置
+        self._sync_config_from_db()
         self._stopping = False  # 防止重复点击停止按钮
         self._quitting = False  # 标记是否正在退出应用
         
@@ -1958,7 +2162,32 @@ class MainWindow(QMainWindow):
         # 应用主题
         self.apply_theme()
         get_theme_manager().theme_changed.connect(self.apply_theme)
-    
+
+    def _sync_config_from_db(self):
+        """从数据库读取配置，同步到运行时 config 模块"""
+        # 自定义录制路径
+        custom_dir = self.storage.get_setting("custom_chunks_dir", "")
+        if custom_dir:
+            config.CUSTOM_CHUNKS_DIR = custom_dir
+            config.CHUNKS_DIR = Path(custom_dir)
+            config.CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 缓存上限
+        cache_limit = self.storage.get_setting("chunks_max_size_gb", str(config.CHUNKS_MAX_SIZE_GB))
+        try:
+            config.CHUNKS_MAX_SIZE_GB = int(cache_limit)
+        except ValueError:
+            pass
+
+        # 空闲检测设置
+        idle_enabled = self.storage.get_setting("idle_pause_enabled", "1" if config.IDLE_PAUSE_ENABLED else "0")
+        config.IDLE_PAUSE_ENABLED = (idle_enabled == "1")
+        idle_timeout = self.storage.get_setting("idle_pause_timeout_min", str(config.IDLE_PAUSE_TIMEOUT_SECONDS // 60))
+        try:
+            config.IDLE_PAUSE_TIMEOUT_SECONDS = int(idle_timeout) * 60
+        except ValueError:
+            pass
+
     def _setup_window(self):
         """设置窗口属性"""
         self.setWindowTitle(config.WINDOW_TITLE)
@@ -2012,13 +2241,17 @@ class MainWindow(QMainWindow):
         self.nav_timeline.setChecked(True)
         self.nav_timeline.clicked.connect(lambda: self._switch_page(0))
         sidebar_layout.addWidget(self.nav_timeline)
-        
+
+        self.nav_report = SidebarButton("日报", "📋")
+        self.nav_report.clicked.connect(lambda: self._switch_page(1))
+        sidebar_layout.addWidget(self.nav_report)
+
         self.nav_stats = SidebarButton("统计", "📈")
-        self.nav_stats.clicked.connect(lambda: self._switch_page(1))
+        self.nav_stats.clicked.connect(lambda: self._switch_page(2))
         sidebar_layout.addWidget(self.nav_stats)
-        
+
         self.nav_settings = SidebarButton("设置", "⚙️")
-        self.nav_settings.clicked.connect(lambda: self._switch_page(2))
+        self.nav_settings.clicked.connect(lambda: self._switch_page(3))
         sidebar_layout.addWidget(self.nav_settings)
         
         sidebar_layout.addStretch()
@@ -2062,12 +2295,18 @@ class MainWindow(QMainWindow):
         self.timeline_view.export_requested.connect(self._on_export_requested)
         self.timeline_view.card_updated.connect(self._on_card_updated)
         self.timeline_view.card_deleted.connect(self._on_card_deleted)
+        self.timeline_view.daily_report_clicked.connect(self._generate_daily_report)
         self.stack.addWidget(self.timeline_view)
-        
+
+        # 日报页面
+        self.report_view = DailyReportView(self.storage)
+        self.report_view.generate_report_requested.connect(self._generate_daily_report)
+        self.stack.addWidget(self.report_view)
+
         # 统计页面
         self.stats_panel = StatsPanel(self.storage)
         self.stack.addWidget(self.stats_panel)
-        
+
         # 设置页面
         self.settings_panel = SettingsPanel(self.storage)
         self.settings_panel.api_key_saved.connect(self._on_api_key_saved)
@@ -2155,7 +2394,12 @@ class MainWindow(QMainWindow):
         self.email_timer = QTimer(self)
         self.email_timer.timeout.connect(self._check_email_schedule)
         self.email_timer.start(60000)  # 每 60 秒检查
-        
+
+        # 录制状态同步定时器 - 每 5 秒同步一次（处理空闲自动暂停的UI状态）
+        self._state_sync_timer = QTimer(self)
+        self._state_sync_timer.timeout.connect(self._sync_recording_ui_state)
+        self._state_sync_timer.start(5000)
+
         # 初始化邮件调度器
         self._init_email_scheduler()
     
@@ -2175,6 +2419,9 @@ class MainWindow(QMainWindow):
         
         # 加载今日时间轴
         self._refresh_timeline()
+
+        # 延迟检查昨日日报（让 UI 先加载完成）
+        QTimer.singleShot(3000, self._auto_generate_yesterday_report)
     
     def _refresh_timeline(self):
         """刷新时间轴"""
@@ -2187,11 +2434,12 @@ class MainWindow(QMainWindow):
         """切换页面"""
         self.stack.setCurrentIndex(index)
         self.nav_timeline.setChecked(index == 0)
-        self.nav_stats.setChecked(index == 1)
-        self.nav_settings.setChecked(index == 2)
-        
+        self.nav_report.setChecked(index == 1)
+        self.nav_stats.setChecked(index == 2)
+        self.nav_settings.setChecked(index == 3)
+
         # 切换到统计页面时刷新数据
-        if index == 1:
+        if index == 2:
             self.stats_panel.refresh()
     
     def auto_start_recording(self):
@@ -2304,6 +2552,31 @@ class MainWindow(QMainWindow):
             self.pause_btn.setEnabled(True)
             self.tray_pause_action.setEnabled(True)
     
+    def _sync_recording_ui_state(self):
+        """同步录制UI状态（处理空闲自动暂停导致的UI不一致）"""
+        if self.recording_manager is None or not self.recording_manager.is_recording:
+            return
+
+        is_paused = self.recording_manager.is_paused
+        btn_says_paused = self.pause_btn.text() == "▶ 继续"
+
+        if is_paused and not btn_says_paused:
+            # 录制已被自动暂停，但按钮仍显示"暂停"
+            self.pause_btn.setText("▶ 继续")
+            self.tray_pause_action.setText("▶ 继续录制")
+            self.recording_indicator.set_recording(True, paused=True)
+            elapsed = self.recording_indicator.get_elapsed_time()
+            if self.recording_manager.is_idle_paused:
+                self.tray_icon.setToolTip(f"Dayflow - 空闲暂停 {elapsed}")
+            else:
+                self.tray_icon.setToolTip(f"Dayflow - 已暂停 {elapsed}")
+        elif not is_paused and btn_says_paused:
+            # 录制已自动恢复，但按钮仍显示"继续"
+            self.pause_btn.setText("⏸ 暂停")
+            self.tray_pause_action.setText("⏸ 暂停录制")
+            self.recording_indicator.set_recording(True, paused=False)
+            self.tray_icon.setToolTip("Dayflow - 录制中...")
+
     def _start_analysis(self):
         """启动分析调度器"""
         if self.analysis_manager is None:
@@ -2553,6 +2826,103 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"导出失败: {e}")
             logger.error(f"导出 CSV 失败: {e}")
+
+    def _generate_daily_report(self, date: datetime):
+        """生成每日工作报告"""
+        import threading
+
+        date_str = date.strftime("%Y-%m-%d")
+
+        # 检查缓存
+        cached = self.storage.get_daily_report(date_str)
+        if cached:
+            self.report_view.show_report(date_str, cached)
+            self._switch_page(1)
+            dialog = DailyReportDialog(date_str, cached, self)
+            dialog.exec()
+            return
+
+        # 获取当日活动卡片
+        cards = self.storage.get_cards_for_date(date)
+        if not cards:
+            QMessageBox.information(self, "提示", f"{date_str} 没有活动记录数据")
+            return
+
+        # 显示进度对话框
+        progress = QProgressDialog(f"正在为 {date_str} 生成工作报告...", None, 0, 0, self)
+        progress.setWindowTitle("AI 分析中")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        def _do_generate():
+            try:
+                from core.llm_provider import generate_daily_report_sync
+                result = generate_daily_report_sync(cards, date_str)
+                self.storage.save_daily_report(date_str, result)
+                QTimer.singleShot(0, lambda: self._show_daily_report(date_str, result))
+            except Exception as e:
+                logger.error(f"日报生成失败: {e}")
+                QTimer.singleShot(0, lambda: self._show_report_error(str(e)))
+            finally:
+                QTimer.singleShot(0, progress.close)
+
+        threading.Thread(target=_do_generate, daemon=True).start()
+
+    def _show_daily_report(self, date_str: str, content: str):
+        """展示日报"""
+        if hasattr(self, '_report_loading'):
+            self._report_loading.close()
+        # 同时更新日报页面并切换过去
+        self.report_view.show_report(date_str, content)
+        self._switch_page(1)
+        # 弹出对话框展示
+        dialog = DailyReportDialog(date_str, content, self)
+        dialog.exec()
+
+    def _show_report_error(self, error: str):
+        """展示日报生成错误"""
+        if hasattr(self, '_report_loading'):
+            self._report_loading.close()
+        self.report_view.show_error(f"日报生成失败：{error}")
+        QMessageBox.warning(self, "生成失败", f"日报生成失败：{error}")
+
+    def _auto_generate_yesterday_report(self):
+        """启动时自动检查并生成昨日日报"""
+        from datetime import timedelta
+
+        yesterday = datetime.now() - timedelta(days=1)
+        date_str = yesterday.strftime("%Y-%m-%d")
+
+        # 检查是否已有缓存
+        cached = self.storage.get_daily_report(date_str)
+        if cached:
+            return  # 已有缓存，跳过
+
+        # 检查昨日是否有数据
+        cards = self.storage.get_cards_for_date(yesterday)
+        if not cards:
+            return  # 无数据，跳过
+
+        # 检查 API Key 是否配置
+        api_key = self.storage.get_setting("api_key", config.API_KEY)
+        if not api_key:
+            return  # 未配置 API，跳过
+
+        logger.info(f"自动为 {date_str} 生成工作报告...")
+
+        import threading
+
+        def _do_auto_generate():
+            try:
+                from core.llm_provider import generate_daily_report_sync
+                result = generate_daily_report_sync(cards, date_str)
+                self.storage.save_daily_report(date_str, result)
+                QTimer.singleShot(0, lambda: self._show_daily_report(date_str, result))
+            except Exception as e:
+                logger.warning(f"自动日报生成失败: {e}")
+
+        threading.Thread(target=_do_auto_generate, daemon=True).start()
     
     def _show_window(self):
         """显示主窗口"""
@@ -2605,27 +2975,19 @@ class MainWindow(QMainWindow):
         QApplication.quit()
     
     def closeEvent(self, event):
-        """窗口关闭事件 - 询问是否退出"""
+        """窗口关闭事件 - 直接最小化到系统托盘"""
+        logger = logging.getLogger(__name__)
+        logger.debug(f"closeEvent called, _quitting={self._quitting}")
+
         if self._quitting:
             # 真正退出，接受关闭事件
+            logger.debug("Accepting close event (quitting application)")
             event.accept()
         else:
-            # 询问用户
-            reply = QMessageBox.question(
-                self,
-                "退出确认",
-                "确定要退出 Dayflow 吗？\n\n点击「否」将最小化到系统托盘。",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
-            )
-            
-            if reply == QMessageBox.Yes:
-                event.ignore()
-                self._quit_app()
-            elif reply == QMessageBox.No:
-                event.ignore()
-                self._minimize_to_tray()
-            else:
-                event.ignore()
+            # 直接最小化到系统托盘，不显示确认对话框
+            logger.debug("Ignoring close event, minimizing to tray")
+            event.ignore()
+            self._minimize_to_tray()
     
     def _init_email_scheduler(self):
         """初始化邮件调度器"""

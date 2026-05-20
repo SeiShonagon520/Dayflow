@@ -416,3 +416,43 @@ class StorageManager:
             logger.info(f"已保存设置 {key}")
         except Exception as e:
             logger.error(f"保存设置失败 {key}: {e}")
+
+    # ==================== Daily Reports ====================
+
+    def save_daily_report(self, date_str: str, content: str) -> int:
+        """保存日报到缓存"""
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+            conn.execute("PRAGMA synchronous=FULL")
+            cursor = conn.execute(
+                """
+                INSERT INTO daily_reports (report_date, content)
+                VALUES (?, ?)
+                ON CONFLICT(report_date) DO UPDATE SET content = ?, created_at = CURRENT_TIMESTAMP
+                """,
+                (date_str, content, content)
+            )
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+            logger.info(f"已保存日报: {date_str}")
+            return cursor.lastrowid
+        except Exception as e:
+            logger.error(f"保存日报失败 {date_str}: {e}")
+            return -1
+
+    def get_daily_report(self, date_str: str) -> Optional[str]:
+        """获取缓存的日报"""
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT content FROM daily_reports WHERE report_date = ?",
+                (date_str,)
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row["content"] if row else None
+        except Exception as e:
+            logger.error(f"读取日报失败 {date_str}: {e}")
+            return None
