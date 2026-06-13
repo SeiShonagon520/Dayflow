@@ -150,7 +150,10 @@ class ActivityCard:
     def duration_minutes(self) -> float:
         """活动持续时间（分钟）"""
         if self.start_time and self.end_time:
-            delta = self.end_time - self.start_time
+            # 统一时区状态：如果一个带时区一个不带，去掉时区信息再计算
+            start = self.start_time.replace(tzinfo=None) if self.start_time.tzinfo else self.start_time
+            end = self.end_time.replace(tzinfo=None) if self.end_time.tzinfo else self.end_time
+            delta = end - start
             return delta.total_seconds() / 60
         return 0
 

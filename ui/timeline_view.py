@@ -845,9 +845,10 @@ class EmptyStateWidget(QWidget):
 
 class TimelineHeader(QWidget):
     """时间轴头部 - 显示日期和统计"""
-    
+
     date_changed = Signal(datetime)
     export_clicked = Signal()
+    daily_report_clicked = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -898,6 +899,13 @@ class TimelineHeader(QWidget):
         self.export_btn.setCursor(Qt.PointingHandCursor)
         self.export_btn.clicked.connect(self.export_clicked.emit)
         layout.addWidget(self.export_btn)
+
+        # 生成日报按钮
+        self.report_btn = QPushButton("📋 生成日报")
+        self.report_btn.setFixedHeight(32)
+        self.report_btn.setCursor(Qt.PointingHandCursor)
+        self.report_btn.clicked.connect(self.daily_report_clicked.emit)
+        layout.addWidget(self.report_btn)
         
         # 统计信息
         self.stats_label = QLabel()
@@ -1026,6 +1034,7 @@ class TimelineView(QWidget):
     export_requested = Signal(datetime, list)  # 日期, 卡片列表
     card_updated = Signal(ActivityCard)  # 卡片更新信号
     card_deleted = Signal(int)  # 卡片删除信号
+    daily_report_clicked = Signal(datetime)  # 生成日报信号
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1053,6 +1062,7 @@ class TimelineView(QWidget):
         self.header = TimelineHeader()
         self.header.date_changed.connect(self._on_date_changed)
         self.header.export_clicked.connect(self._on_export_clicked)
+        self.header.daily_report_clicked.connect(lambda: self.daily_report_clicked.emit(self._current_date))
         main_layout.addWidget(self.header)
         
         # 搜索栏

@@ -124,6 +124,9 @@ def main():
     app.setApplicationName("Dayflow")
     app.setApplicationVersion(config.VERSION)
     app.setOrganizationName("Dayflow")
+
+    # 防止最后一个窗口关闭时退出应用
+    app.setQuitOnLastWindowClosed(False)
     
     # 设置默认字体
     font = QFont("Segoe UI", 10)

@@ -75,3 +75,13 @@ CREATE TABLE IF NOT EXISTS email_send_log (
 
 CREATE INDEX IF NOT EXISTS idx_email_send_log_period ON email_send_log(period);
 CREATE INDEX IF NOT EXISTS idx_email_send_log_time ON email_send_log(send_time);
+
+-- 日报缓存表
+CREATE TABLE IF NOT EXISTS daily_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date TEXT NOT NULL UNIQUE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_reports_date ON daily_reports(report_date);

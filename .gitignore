@@ -69,6 +69,14 @@ desktop.ini
 # Test files
 test_*.mp4
 *.test.py
+_test_*.py
+_run_*.py
+
+# Claude local settings
+.claude/
+
+# Packaged builds
+Dayflow/
 
 # PyInstaller (keep .spec file for reproducible builds)
 # *.spec
