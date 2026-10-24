@@ -100,6 +100,7 @@ def main():
     # 解析命令行参数
     args = parse_args()
     
+    config.ensure_directories()
     setup_logging()
     logger = logging.getLogger(__name__)
     
@@ -140,6 +141,11 @@ def main():
     from ui.themes import get_theme_manager, DARK_THEME, LIGHT_THEME
     
     storage = StorageManager()
+    
+    # 读取动效偏好（跟随系统 / 强制开启 / 强制关闭）
+    from ui.motion import get_motion_settings
+    get_motion_settings().attach_storage(storage)
+    
     saved_theme = storage.get_setting("theme", "dark")
     theme_manager = get_theme_manager()
     if saved_theme == "light":

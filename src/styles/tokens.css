@@ -1,0 +1,250 @@
+/*
+ * Dayflow 设计令牌
+ *
+ * 这是整个界面唯一的样式数据源。所有颜色、间距、圆角、字号都必须
+ * 来自这里 —— 组件文件里不允许出现硬编码的色值或像素值。
+ *
+ * 改一个圆角只改这一行，全站生效。这是旧 Qt 界面做不到的地方：
+ * 那里有 559 条样式散落在各个组件的内联样式里。
+ *
+ * 配色沿用 Apple 设计系统的中性灰 + 单一 Action Blue，
+ * 但语义色重新校验过对比度（见文末注释）。
+ */
+
+:root {
+  /* ── 画布与表面 ──────────────────────────────────────────
+     两级画布 + 卡片三级，构成深度层级。不靠阴影，靠明度差。 */
+  --bg-canvas: #f6f5f1;      /* 应用底色：轻微暖纸感 */
+  --bg-surface: #fdfcf9;     /* 卡片 */
+  --bg-raised: #fdfcf9;      /* 浮层：下拉、气泡 */
+  --bg-sunken: #efeee8;      /* 凹陷：输入框、代码块 */
+  --bg-hover: #eeede7;
+  --bg-active: #e6e4dd;
+
+  --bg-sidebar: #fdfcf9;
+  --bg-sidebar-hover: #f6f5f1;
+
+  /* ── 描边 ──────────────────────────────────────────────
+     发丝线而非粗边框。这是密集数据界面的基本要求。 */
+  --border-subtle: #efeee9;
+  --border-default: #e4e2dc;
+  --border-strong: #d0cec7;
+
+  /* ── 文字 ──────────────────────────────────────────────
+     全部 ≥ 4.5:1（正文对比度校验过） */
+  --text-primary: #1d1d1f;   /* 17.4:1 */
+  --text-secondary: #3a3a3c; /* 10.6:1 */
+  --text-tertiary: #6e6e73;  /* 5.1:1  —— 不要比这更浅 */
+  --text-placeholder: #8e8e93;
+  --text-on-accent: #ffffff;
+
+  /* 凹陷表面（输入框底）比卡片深，次要文字要相应加深才够 4.5:1 */
+  --text-tertiary-sunken: #63636a; /* 5.4:1 on --bg-sunken */
+
+  /* ── 强调色（唯一）────────────────────────────────────
+     Action Blue。整个界面只有这一个交互色。
+     亮色下同一个色既够当底色也够当文字，所以不需要拆分。 */
+  --accent: #0066cc;         /* 白字 5.6:1  Lc 77 */
+  --accent-hover: #0071e3;
+  --accent-press: #0055aa;
+  --accent-text: #0066cc;     /* 与 accent 同值，语义上区分「当文字用」 */
+  --accent-subtle: #eaf3fc;
+  --accent-subtle-hover: #dbeaf9;
+  --accent-ring: rgb(0 102 204 / 0.35);
+  --timeline-track: rgb(0 102 204 / 0.28);
+
+  /* 压在 accent 底上的文字。亮色主题是白字，
+     暗色主题改成深蓝（见 dark 块）。这是唯一随主题翻转的「反色」token。 */
+  --on-accent: #ffffff;
+
+  /* ── 语义色 ─────────────────────────────────────────────
+     全部按小字号 AA 校验过，不是拿现成色值凑的。
+     旧界面的 error 是 #EF4444，在深色卡片上只有 3.89:1。 */
+  --success: #157347;        /* 5.9:1 */
+  --success-bg: #e8f5ee;
+  --warning: #8a5a00;        /* 5.9:1 */
+  --warning-bg: #fdf3e2;
+  --danger: #c42b1c;         /* 5.7:1 */
+  --danger-solid: #c42b1c;   /* 亮色下同一个值两边都达标，无需拆分 */
+  --danger-bg: #fdeceb;
+  --danger-hover: #a8231a;
+
+  /* ── 状态指示（录制）──────────────────────────────────── */
+  --recording: #d70015;
+  --recording-bg: #fdeceb;
+
+  /* ── 类别色（图表用）────────────────────────────────────
+     8 个色相，各自 ≥ 4.5:1（在最深的 --bg-sunken 上也达标）。
+     顺序固定，图表里同一个类别永远同一个颜色。 */
+  --cat-work: #0a62bd;
+  --cat-code: #0f7a4a;
+  --cat-study: #5b21b6;
+  --cat-meeting: #96590a;
+  --cat-media: #b3215e;
+  --cat-social: #0e7490;
+  --cat-rest: #63636a;
+  --cat-other: #5f5f66;
+
+  /* ── 圆角 ──────────────────────────────────────────────
+     阶梯固定，不要随手取值。卡片 lg，控件 md，标签 sm。 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* ── 间距 ──────────────────────────────────────────────
+     4px 基准。组件内只用 sm~xl，页面级用 2xl~3xl。 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── 字号 ──────────────────────────────────────────────
+     系统字体栈。SF Pro 是 macOS/iOS 的，Windows 上回落到
+     Segoe UI Variable，视觉重量接近。 */
+  --font-sans: "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
+               "Microsoft YaHei UI", -apple-system, system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", "Consolas",
+               "Microsoft YaHei Mono", ui-monospace, monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.47;
+  --leading-relaxed: 1.6;
+
+  /* ── 阴影（克制）────────────────────────────────────────
+     只给真正浮起来的东西用：弹层、下拉。不给卡片用 ——
+     卡片靠表面明度差区分层级，加阴影会显得脏。 */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.08);
+  --shadow-lg: 0 8px 28px rgb(0 0 0 / 0.12);
+  --shadow-popover: 0 6px 24px rgb(0 0 0 / 0.14);
+
+  /* ── 动效 ──────────────────────────────────────────────
+     时长分档，不随手写毫秒。离开比进入快 —— 用户已经知道
+     它要走了。规范基线 150ms：快于 100ms 显抖动，慢于 300ms 显迟钝。
+
+     --ease-spring 目前没有界面在用，留着是为了将来做手势跟手动画；
+     规范明确反对 bounce/elastic，这里只保留一个不带过冲的 spring。 */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.26, 0.64, 1);
+
+  --dur-tactile: 100ms;   /* 按下反馈、快速关闭 */
+  --dur-base: 150ms;      /* hover、焦点环 —— 全站基线 */
+  --dur-reveal: 200ms;    /* 小范围揭示、成功确认 */
+  --dur-exit: 150ms;      /* 退场：比入场短，但不是瞬间消失 */
+  --dur-handoff: 200ms;   /* 骨架 → 内容的交接淡入淡出 */
+  --dur-menu: 250ms;      /* 菜单、弹层、小对话框 */
+  --dur-space: 300ms;     /* 展开折叠、页面切换 */
+  --dur-page: 400ms;      /* 整屏级转场 */
+  --dur-spin: 800ms;      /* 加载指示器转一圈 */
+  /* 撤销窗口。必须和 TimelinePage 里的 UNDO_MS 一致 ——
+     动画比计时器长或短，倒计时条和实际消失就对不上。 */
+  --undo-window: 6000ms;
+
+  /* ── 层级 ────────────────────────────────────────────── */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-popover: 100;
+  --z-toast: 200;
+  --z-modal: 300;
+
+  /* 模态遮罩。单独成 token 是因为两个主题的遮罩浓度不同：
+     亮色下要更重才压得住背景，暗色下太重会糊成一片。 */
+  --scrim: rgb(0 0 0 / 0.32);
+}
+
+/* ── 暗色 ──────────────────────────────────────────────────
+   独立的一套值，不是把亮色取反。近黑表面 + 提亮文字。 */
+[data-theme="dark"] {
+  --bg-canvas: #141416;
+  --bg-surface: #1e1e20;
+  --bg-raised: #2a2a2c;
+  --bg-sunken: #17171a;
+  --bg-hover: #2a2a2c;
+  --bg-active: #353538;
+
+  --bg-sidebar: #101012;
+  --bg-sidebar-hover: #1e1e20;
+
+  --border-subtle: #2a2a2c;
+  --border-default: #353538;
+  --border-strong: #48484a;
+
+  --text-primary: #f5f5f7;    /* Lc 101  正文 */
+  --text-secondary: #c9c9ce;  /* Lc 75.1  刚好达正文阈值 */
+  --text-tertiary: #aeaeb3;   /* Lc 60.3  辅助文字 */
+  --text-placeholder: #8e8e95;
+  --text-on-accent: #ffffff;
+  --text-tertiary-sunken: #b0b0b6;
+
+  /* 压在 accent 底上的文字。两个主题都是白字 ——
+     暗色的 accent 已经压到 #1a72cf，白字才够 Lc 75。 */
+  --on-accent: #ffffff;
+
+  /* 暗色 accent 承担双重职责：主按钮的底色，也是链接/强调文字。
+     填充色必须压到 APCA 允许的位置：在 #2997ff 上，无论用白字还是深字，
+     都无法同时满足 APCA Lc 75 与 WCAG 4.5（实测过，穷举了深蓝区间）。
+     #1a72cf + 白字是唯一同时达标的组合：Lc 78 / 4.83:1。
+     文字与描边用更亮的 --accent-text，那部分不压在底色上，可以更亮。*/
+  --accent: #1a72cf;          /* 填充色  白字 Lc 78  4.83:1 */
+  --accent-hover: #1f7fdb;
+  --accent-press: #155ea8;
+  --accent-text: #65b4ff;     /* 文字/描边 Lc 60.4  7.6:1 */
+  --accent-subtle: #10243a;
+  --accent-subtle-hover: #16304b;
+  --accent-ring: rgb(101 180 255 / 0.45);
+  --timeline-track: rgb(101 180 255 / 0.34);
+
+  --success: #3dd68c;        /* Lc 68 */
+  --success-bg: #10291f;
+  --warning: #efb93b;        /* Lc 70 */
+  --warning-bg: #2a2110;
+  /* danger 和 accent 一样要拆：文字用亮的，填充用深的。
+     上一版只有一个值时，两头都顾不上 —— 提亮到能当文字（#fa9188），
+     白字压上去就只剩 2.22:1。 */
+  --danger: #fa9188;          /* 文字  Lc 60.1  7.5:1 */
+  --danger-solid: #c42b1c;    /* 填充  白字 Lc 82.9  5.66:1 */
+  --danger-bg: #2d1512;
+  --danger-hover: #b82718;
+
+  --recording: #ff5c5c;
+  --recording-bg: #2d1215;
+
+  --cat-work: #4ca3ff;
+  --cat-code: #3dd68c;
+  --cat-study: #a78bfa;
+  --cat-meeting: #efb93b;
+  --cat-media: #ff6e9c;
+  --cat-social: #4fd0e3;
+  --cat-rest: #aeaeb2;
+  --cat-other: #b3b3b8;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 8px 28px rgb(0 0 0 / 0.6);
+  --shadow-popover: 0 6px 24px rgb(0 0 0 / 0.7);
+
+  --scrim: rgb(0 0 0 / 0.55);
+}

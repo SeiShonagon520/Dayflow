@@ -5,7 +5,8 @@
 **AI 驱动的智能时间追踪与生产力分析工具**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
-[![PySide6](https://img.shields.io/badge/GUI-PySide6-green?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
+[![GUI](https://img.shields.io/badge/GUI-Tauri_2.0_%7C_React_18-61DAFB?logo=react&logoColor=white)](https://tauri.app/)
+[![Core](https://img.shields.io/badge/Core-Rust_%7C_Python-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
@@ -98,7 +99,15 @@ Dayflow 的设计原则是：**本地录制 + 云端分析 + 本地存储**。
 
 ### 🆕 最近更新亮点
 
-#### v1.6.0 (2026-05)
+#### v1.6.0 (2026-10)
+
+- **架构全面现代升级**：从传统桌面 GUI 迁移至 **Tauri 2.0 (Rust) + React 18 + Vite** 技术栈，启动秒级响应，运行极速流畅，资源占用更轻
+- **全新现代流式 UI**：三栏流式布局、多维时间轴卡片、优雅过渡微动效、系统级暗色模式自适应
+- **内核级进程管控（Windows Job Object）**：后台 Python bridge 深度绑定 Windows Job Object，彻底消除子进程黑窗口与孤儿进程残留
+- **智能离线保底日报生成**：当外部 AI 接口超时、失效（如 API Key 异常）或处于离线状态时，自动触发本地离线聚合引擎，极速生成包含今日概览、耗时分配表、核心产出、时间轴复盘与生产力洞察的结构化 Markdown 日报
+- **交互式数据仪表盘**：重构 7 天/30 天统计面板，涵盖总时长、生产力趋势折线、分类环形占比图、每日投入热力图及 24 小时时段分布柱状图
+- **多显示器全屏拼接与空闲暂停**：支持多屏跨屏全景合并捕获；检测键鼠无操作空闲状态自动休眠暂停，恢复操作时无缝继续
+- **隐私保护与存储自维**：内置敏感窗口标题过滤策略；支持切片存储上限配额与自动清理轮转
 
 - **多显示器全屏录制**：支持 `output_idx=-1` 全屏拼接模式，自动识别并合并所有显示器画面
 - **空闲自动暂停录制**：基于 Windows GetLastInputInfo 检测键盘/鼠标空闲，超时可自动暂停录制，恢复活动时自动继续
@@ -392,12 +401,14 @@ Dayflow/
 
 | 组件 | 技术 |
 |------|------|
-| GUI 框架 | PySide6 (Qt6) |
+| 桌面宿主 | Tauri 2.0 (Rust) |
+| 前端界面 | React 18 + TypeScript + Vite |
+| 进程管控 | Windows Job Object (Win32 API 内核级管理) |
+| 通信架构 | 本地安全 HTTP / REST API (FastAPI + Uvicorn) |
 | 屏幕捕获 | dxcam (DirectX) |
 | 视频处理 | OpenCV |
-| 网络请求 | httpx (HTTP/2) |
-| 数据存储 | SQLite |
-| AI 分析 | OpenAI 兼容接口 |
+| 数据存储 | SQLite (WAL 模式 + 连接池) |
+| AI 分析 | OpenAI 兼容接口 (视觉大模型) + 本地结构化聚合引擎 |
 
 ---
 

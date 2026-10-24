@@ -12,10 +12,11 @@ from PySide6.QtWidgets import (
     QFrame, QTextBrowser, QDateEdit, QListWidget, QListWidgetItem,
     QMessageBox, QFileDialog, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QDate
+from PySide6.QtCore import Qt, Signal, QDate, QTimer
 from PySide6.QtGui import QClipboard, QGuiApplication
 
-from ui.themes import get_theme, get_theme_manager
+from ui.themes import get_theme, get_theme_manager, get_markdown_stylesheet
+from ui.components.scale_feedback import FeedbackButton
 from database.storage import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -105,20 +106,38 @@ class DailyReportView(QWidget):
         action_bar = QHBoxLayout()
         action_bar.setSpacing(10)
         action_bar.addStretch()
+        self._action_bar = action_bar
 
-        self.copy_btn = QPushButton("📋 复制内容")
+        # 命中区 40px：视觉高度 34 不变，靠布局留白把可点区域撑起来，
+        # 这样按钮看起来依然紧凑，但手指/鼠标不需要精准点中。
+        self.copy_btn = FeedbackButton("📋 复制内容")
         self.copy_btn.setFixedHeight(34)
+        self.copy_btn.setMinimumWidth(104)
         self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.setToolTip("复制这篇日报的全文")
         self.copy_btn.clicked.connect(self._on_copy_clicked)
         self.copy_btn.setEnabled(False)
         action_bar.addWidget(self.copy_btn)
 
-        self.export_btn = QPushButton("💾 导出文件")
+        self.export_btn = FeedbackButton("💾 导出文件")
         self.export_btn.setFixedHeight(34)
+        self.export_btn.setMinimumWidth(104)
         self.export_btn.setCursor(Qt.PointingHandCursor)
+        self.export_btn.setToolTip("把这篇日报导出为 Markdown 文件")
         self.export_btn.clicked.connect(self._on_export_clicked)
         self.export_btn.setEnabled(False)
         action_bar.addWidget(self.export_btn)
+
+        # 操作结果提示：替换掉「点完弹个模态框」的做法
+        self._status_label = QLabel("")
+        self._status_label.setObjectName("cardDesc")
+        self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._status_label.setVisible(False)
+        action_bar.addWidget(self._status_label)
+
+        self._status_timer = QTimer(self)
+        self._status_timer.setSingleShot(True)
+        self._status_timer.timeout.connect(self._status_label.setVisible)
 
         right_layout.addLayout(action_bar)
 
@@ -175,6 +194,8 @@ class DailyReportView(QWidget):
                 padding: 4px 8px;
             }}
         """)
+        # 注入现代高质感 Markdown 排版样式
+        self.report_browser.document().setDefaultStyleSheet(get_markdown_stylesheet(t))
 
     def _load_report_dates(self):
         """加载已有日报的日期列表"""
@@ -224,11 +245,33 @@ class DailyReportView(QWidget):
             self.report_browser.setMarkdown(content)
             self.copy_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
+            self.copy_btn.setToolTip("复制这篇日报的全文")
+            self.export_btn.setToolTip("把这篇日报导出为 Markdown 文件")
         else:
-            self.report_browser.setPlaceholderText(f"{date_str} 的日报尚未生成。")
             self.report_browser.clear()
+            # 空状态要说明「为什么空」和「接下来做什么」，
+            # 不能只把按钮变灰让用户自己猜。
+            self.report_browser.setHtml(self._empty_report_html(date_str))
             self.copy_btn.setEnabled(False)
             self.export_btn.setEnabled(False)
+            # 禁用原因写在 tooltip 里：灰按钮本身不会自解释
+            self.copy_btn.setToolTip(f"{date_str} 的日报尚未生成，无法复制")
+            self.export_btn.setToolTip(f"{date_str} 的日报尚未生成，无法导出")
+
+    def _empty_report_html(self, date_str: str) -> str:
+        """日报为空时的引导内容"""
+        from ui.themes import get_theme
+        t = get_theme()
+        return f"""
+        <div style="color:{t.text_muted}; font-size:14px; line-height:1.7;
+                    padding:32px; text-align:center;">
+            <div style="font-size:32px; margin-bottom:12px;">📋</div>
+            <div style="color:{t.text_primary}; font-size:15px; font-weight:600;
+                        margin-bottom:8px;">{date_str} 还没有日报</div>
+            <div>点击上方「生成日报」让 AI 汇总这一天的活动。<br/>
+                 如果时间轴还是空的，先开始录制。</div>
+        </div>
+        """
 
     def _on_generate_clicked(self):
         """点击生成日报"""
@@ -238,31 +281,61 @@ class DailyReportView(QWidget):
 
     def _on_copy_clicked(self):
         """复制日报内容到剪贴板"""
-        content = self.report_browser.toPlainText()
-        if content:
-            clipboard = QGuiApplication.clipboard()
-            clipboard.setText(content)
-            QMessageBox.information(self, "成功", "日报内容已复制到剪贴板")
+        content = self.report_browser.toPlainText().strip()
+        if not content:
+            # 静默失败是最差的体验：点了没反应，用户会以为程序卡了
+            QMessageBox.information(
+                self, "没有可复制的内容",
+                "当前这篇日报还没有内容。\n\n"
+                "先点击「生成日报」，或从左侧选择一篇已有的日报。"
+            )
+            return
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(content)
+        self._flash_status("已复制到剪贴板")
+
+    def _flash_status(self, message: str):
+        """在操作栏里短暂显示结果，替代弹模态框"""
+        self._status_label.setText(message)
+        self._status_label.setVisible(True)
+        self._status_timer.start(2600)
 
     def _on_export_clicked(self):
         """导出日报为文件"""
         if not self._current_date_str:
+            QMessageBox.information(
+                self, "没有选择日报",
+                "先从左侧选择一篇日报，或点击「生成日报」创建一篇。"
+            )
             return
 
-        content = self.report_browser.toPlainText()
+        content = self.report_browser.toPlainText().strip()
         if not content:
+            QMessageBox.information(
+                self, "没有可导出的内容",
+                f"{self._current_date_str} 的日报还没有内容。\n\n"
+                "先点击「生成日报」让 AI 汇总这一天的活动。"
+            )
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "导出日报", f"日报_{self._current_date_str}.md",
             "Markdown 文件 (*.md);;文本文件 (*.txt)"
         )
-        if file_path:
-            try:
-                Path(file_path).write_text(content, encoding="utf-8")
-                QMessageBox.information(self, "成功", f"日报已导出到：{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "失败", f"导出失败：{e}")
+        if not file_path:
+            # 用户主动取消，不是错误，不该弹任何提示
+            return
+        try:
+            Path(file_path).write_text(content, encoding="utf-8")
+            self._flash_status("已导出")
+        except Exception as e:
+            # 错误要说清发生了什么、下一步做什么
+            QMessageBox.critical(
+                self, "导出失败",
+                f"无法写入文件：\n{file_path}\n\n"
+                f"原因：{e}\n\n"
+                "请确认路径有效且文件未被其他程序占用，或换一个位置再试。"
+            )
 
     def show_report(self, date_str: str, content: str):
         """外部调用：展示日报内容"""

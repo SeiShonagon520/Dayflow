@@ -17,31 +17,21 @@ from PySide6.QtGui import (
     QLinearGradient, QRadialGradient, QPaintEvent
 )
 
-from ui.themes import get_theme, get_theme_manager
+from ui.themes import (
+    get_theme,
+    get_theme_manager,
+    get_category_color,
+    get_display_categories,
+    get_metric_colors,
+    RADIUS,
+)
 from database.storage import StorageManager
 from core.types import ActivityCard
 
 logger = logging.getLogger(__name__)
 
-# 类别颜色映射 - 更鲜艳的配色
-CATEGORY_COLORS = {
-    "工作": "#3B82F6",
-    "编程": "#8B5CF6", 
-    "学习": "#10B981",
-    "会议": "#F59E0B",
-    "娱乐": "#EF4444",
-    "社交": "#EC4899",
-    "休息": "#6B7280",
-    "其他": "#94A3B8",
-}
-
-# 指标卡片渐变色
-METRIC_GRADIENTS = {
-    "time": ("#3B82F6", "#1D4ED8"),      # 蓝色
-    "efficiency": ("#10B981", "#059669"), # 绿色
-    "deep_work": ("#8B5CF6", "#7C3AED"),  # 紫色
-    "activities": ("#F59E0B", "#D97706"), # 橙色
-}
+# 类别色与指标色统一走 ui/themes.py，浅/深两套明度档
+# （Apple 系统色族，已按 WCAG 校验）。此处不再各自硬编码。
 
 
 def normalize_app_name(name: str) -> str:
@@ -134,16 +124,17 @@ class MetricCard(QFrame):
     
     def set_change(self, change: float, suffix: str = "%"):
         """设置变化值"""
+        t = get_theme()
         self._change = change
         if change > 0:
             self._change_text = f"↑ +{change:.0f}{suffix}"
-            change_color = "#10B981"
+            change_color = t.success
         elif change < 0:
             self._change_text = f"↓ {change:.0f}{suffix}"
-            change_color = "#EF4444"
+            change_color = t.error
         else:
             self._change_text = "— 持平"
-            change_color = "#9CA3AF"
+            change_color = t.text_muted
         
         self.change_label.setText(f"vs 上周 {self._change_text}")
         self.change_label.setStyleSheet(f"font-size: 11px; color: {change_color};")
@@ -151,22 +142,14 @@ class MetricCard(QFrame):
     def _apply_style(self):
         """应用样式"""
         t = get_theme()
-        colors = METRIC_GRADIENTS.get(self._gradient_key, METRIC_GRADIENTS["time"])
-        
-        # 根据主题调整背景
-        if t.name == "dark":
-            bg_color = t.bg_secondary
-            border_color = t.border
-        else:
-            bg_color = "#FFFFFF"
-            border_color = "#E5E7EB"
+        metric_color = get_metric_colors().get(self._gradient_key, t.accent)
         
         self.setStyleSheet(f"""
             QFrame {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 16px;
-                border-left: 4px solid {colors[0]};
+                background-color: {t.bg_secondary};
+                border: 1px solid {t.border};
+                border-radius: 18px;
+                border-left: 4px solid {metric_color};
             }}
         """)
         
@@ -349,16 +332,16 @@ class DonutChart(QWidget):
         
         # 绘制中心文字
         painter.setPen(QPen(QColor(t.text_primary)))
-        painter.setFont(QFont("Microsoft YaHei", 22, QFont.Bold))
+        painter.setFont(QFont("Cascadia Code", 22, QFont.Bold))
         
-        text_rect = QRectF(center.x() - inner_radius, center.y() - 18,
-                          inner_radius * 2, 30)
+        text_rect = QRectF(center.x() - inner_radius, center.y() - 20,
+                          inner_radius * 2, 28)
         painter.drawText(text_rect, Qt.AlignCenter, self._center_text)
         
         # 副标题
-        painter.setFont(QFont("Microsoft YaHei", 10))
+        painter.setFont(QFont("Segoe UI Variable Text", 10))
         painter.setPen(QPen(QColor(t.text_muted)))
-        subtext_rect = QRectF(center.x() - inner_radius, center.y() + 12,
+        subtext_rect = QRectF(center.x() - inner_radius, center.y() + 10,
                              inner_radius * 2, 20)
         painter.drawText(subtext_rect, Qt.AlignCenter, self._center_subtext)
         
@@ -535,7 +518,7 @@ class BarChartWidget(QWidget):
                 if bar_height < 2:
                     continue
                 
-                color = QColor(CATEGORY_COLORS.get(cat, "#94A3B8"))
+                color = QColor(get_category_color(cat))
                 
                 # 创建渐变
                 gradient = QLinearGradient(x, current_y - bar_height, x, current_y)
@@ -794,16 +777,16 @@ class GoalWidget(QWidget):
         
         # 颜色
         if percent >= 100:
-            color = "#10B981"  # 绿色 - 完成
+            color = t.success  # 绿色 - 完成
             status = "🎉 目标已达成！"
         elif percent >= 75:
-            color = "#3B82F6"  # 蓝色 - 接近
+            color = t.accent  # 蓝色 - 接近
             status = "💪 加油，快完成了！"
         elif percent >= 50:
-            color = "#F59E0B"  # 黄色 - 一半
+            color = t.warning  # 黄色 - 一半
             status = "⏰ 已完成一半"
         else:
-            color = "#6B7280"  # 灰色 - 刚开始
+            color = t.text_muted  # 灰色 - 刚开始
             status = "📝 继续努力"
         
         self.progress_bar.setStyleSheet(f"""
@@ -849,7 +832,7 @@ class CategoryLegend(QWidget):
         layout.setSpacing(8)
         layout.setHorizontalSpacing(20)
         
-        categories = list(CATEGORY_COLORS.items())
+        categories = list(get_display_categories().items())
         cols = 4  # 每行 4 个
         
         for idx, (cat, color) in enumerate(categories):
@@ -927,13 +910,13 @@ class HourlyHeatmapWidget(QWidget):
             if minutes > 0:
                 # 有数据：根据分数显示颜色（渐变效果）
                 if score >= 70:
-                    base_color = QColor("#10B981")  # 绿色 - 高效
+                    base_color = QColor(t.success)  # 绿色 - 高效
                 elif score >= 50:
-                    base_color = QColor("#3B82F6")  # 蓝色 - 中等
+                    base_color = QColor(t.accent)  # 蓝色 - 中等
                 elif score >= 30:
-                    base_color = QColor("#F59E0B")  # 黄色 - 一般
+                    base_color = QColor(t.warning)  # 黄色 - 一般
                 else:
-                    base_color = QColor("#EF4444")  # 红色 - 低效
+                    base_color = QColor(t.error)  # 红色 - 低效
                 
                 # 根据时长调整透明度（更细腻的渐变）
                 alpha = min(255, int(120 + minutes * 1.5))
@@ -999,6 +982,247 @@ class HourlyHeatmapWidget(QWidget):
     def leaveEvent(self, event):
         self._hovered_hour = -1
         self.update()
+
+
+class ContributionGridWidget(QWidget):
+    """35天生产力打卡方阵组件 (类似 GitHub 贡献热力图)"""
+    
+    date_clicked = Signal(datetime)  # 点击某一天跳转
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data: Dict[str, Dict] = {}  # "YYYY-MM-DD" -> {"hours": float, "score": float, "activities": int}
+        self._cells: List[Tuple[QRectF, datetime, Dict]] = []
+        self._hovered_index = -1
+        self._focus_index = -1
+        self.setMinimumHeight(170)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
+        # 键盘可达：格子里的数值原本只有悬停才可见
+        self.setFocusPolicy(Qt.StrongFocus)
+        self._recalculate_cells()
+        get_theme_manager().theme_changed.connect(self.update)
+    
+    def _cell_description(self, idx: int) -> str:
+        """把某一格的数据转成屏幕阅读器可读的文字"""
+        if not (0 <= idx < len(self._cells)):
+            return ""
+        _, cell_date, info = self._cells[idx]
+        weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][cell_date.weekday()]
+        if info.get("hours", 0) > 0:
+            return (f"{cell_date.strftime('%Y年%m月%d日')} {weekday}，"
+                    f"记录 {info['hours']:.1f} 小时，"
+                    f"生产力 {info.get('score', 0):.0f}%，"
+                    f"{info.get('activities', 0)} 项活动")
+        return f"{cell_date.strftime('%Y年%m月%d日')} {weekday}，暂无活动记录"
+    
+    def _move_focus(self, delta: int):
+        """在格子间移动键盘焦点"""
+        if not self._cells:
+            return
+        if self._focus_index < 0:
+            self._focus_index = max(0, len(self._cells) - 1)
+        else:
+            self._focus_index = min(max(0, len(self._cells) - 1), self._focus_index + delta)
+        self.setAccessibleDescription(self._cell_description(self._focus_index))
+        self.setToolTip(self._cell_description(self._focus_index))
+        self.update()
+        
+    def set_data(self, data: Dict[str, Dict]):
+        """设置打卡数据 { '2026-09-03': {'hours': 6.5, 'score': 85.0, 'activities': 10} }"""
+        self._data = data
+        self._recalculate_cells()
+        self.update()
+        
+    def _recalculate_cells(self):
+        self._cells.clear()
+        margin_left = 36
+        margin_top = 28
+        cell_size = 18.0
+        spacing = 5.0
+        
+        today = datetime.now()
+        days_to_sunday = 6 - today.weekday()
+        current_week_sunday = today + timedelta(days=days_to_sunday)
+        start_date = current_week_sunday - timedelta(days=34)
+        
+        for row in range(5):
+            y = margin_top + row * (cell_size + spacing)
+            for col in range(7):
+                cell_date = start_date + timedelta(days=row * 7 + col)
+                date_str = cell_date.strftime("%Y-%m-%d")
+                day_info = self._data.get(date_str, {"hours": 0.0, "score": 0.0, "activities": 0})
+                x = margin_left + col * (cell_size + spacing)
+                rect = QRectF(x, y, cell_size, cell_size)
+                self._cells.append((rect, cell_date, day_info))
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        t = get_theme()
+        
+        margin_left = 36
+        margin_top = 28
+        cell_size = 18.0
+        spacing = 5.0
+        
+        # 绘制星期列标签 (周一 到 周日)
+        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+        painter.setFont(QFont("Segoe UI Variable Text", 9))
+        painter.setPen(QColor(t.text_muted))
+        
+        for col, wd in enumerate(weekdays):
+            x = margin_left + col * (cell_size + spacing)
+            painter.drawText(QRectF(x - 2, 4, cell_size + 4, 18), Qt.AlignCenter, wd)
+            
+        today = datetime.now()
+        
+        # 绘制周行标签
+        for row in range(5):
+            y = margin_top + row * (cell_size + spacing)
+            painter.setFont(QFont("Segoe UI Variable Text", 8))
+            painter.setPen(QColor(t.text_muted))
+            painter.drawText(QRectF(0, y + 2, margin_left - 8, cell_size), Qt.AlignRight | Qt.AlignVCenter, f"W{row+1}")
+            
+        # 绘制单元格
+        for idx, (rect, cell_date, day_info) in enumerate(self._cells):
+            hours = day_info.get("hours", 0.0)
+            is_today = (cell_date.date() == today.date())
+            is_future = (cell_date.date() > today.date())
+            
+            if is_future:
+                cell_bg = QColor(t.bg_tertiary)
+                cell_bg.setAlpha(40)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(cell_bg))
+                painter.drawRoundedRect(rect, 4, 4)
+                continue
+                
+            if hours <= 0:
+                cell_bg = QColor(t.bg_tertiary)
+                cell_bg.setAlpha(120 if t.name == "dark" else 160)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(cell_bg))
+                painter.drawRoundedRect(rect, 4, 4)
+            else:
+                emerald = QColor(t.success)
+                if hours < 2.0:
+                    emerald.setAlpha(80)
+                elif hours < 4.0:
+                    emerald.setAlpha(140)
+                elif hours < 6.0:
+                    emerald.setAlpha(200)
+                else:
+                    emerald.setAlpha(255)
+                    
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(emerald))
+                painter.drawRoundedRect(rect, 4, 4)
+                
+            if is_today:
+                today_pen = QPen(QColor(t.accent), 1.8)
+                painter.setPen(today_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(rect, 4, 4)
+                
+            if idx == self._hovered_index:
+                hover_pen = QPen(QColor(t.text_primary), 1.5)
+                painter.setPen(hover_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(rect, 4, 4)
+            
+            # 键盘焦点格：2px Action Blue 焦点环（自绘，QSS 管不到 paintEvent）
+            if idx == self._focus_index and self.hasFocus():
+                focus_rect = rect.adjusted(-2, -2, 2, 2)
+                focus_pen = QPen(QColor(t.accent_focus), 2.0)
+                painter.setPen(focus_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(focus_rect, 5, 5)
+                    
+        # 绘制右下角图例 (少 ▫ ◽ ◻ ◼ 多)
+        legend_y = margin_top + 5 * (cell_size + spacing) + 8
+        legend_x = margin_left + 7 * (cell_size + spacing) - 130
+        
+        painter.setFont(QFont("Segoe UI Variable Text", 8.5))
+        painter.setPen(QColor(t.text_muted))
+        painter.drawText(QRectF(legend_x - 22, legend_y - 2, 20, 16), Qt.AlignRight | Qt.AlignVCenter, "少")
+        
+        alphas = [40, 80, 140, 200, 255]
+        for i, a in enumerate(alphas):
+            bx = legend_x + i * 14
+            br = QRectF(bx, legend_y, 10, 10)
+            if i == 0:
+                c = QColor(t.bg_tertiary)
+                c.setAlpha(120)
+            else:
+                c = QColor(t.success)
+                c.setAlpha(a)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(c))
+            painter.drawRoundedRect(br, 2, 2)
+            
+        painter.setPen(QColor(t.text_muted))
+        painter.drawText(QRectF(legend_x + 5 * 14 + 4, legend_y - 2, 20, 16), Qt.AlignLeft | Qt.AlignVCenter, "多")
+        
+    def mouseMoveEvent(self, event):
+        pos = event.position()
+        for idx, (rect, cell_date, day_info) in enumerate(self._cells):
+            if rect.contains(pos):
+                if self._hovered_index != idx:
+                    self._hovered_index = idx
+                    date_str = cell_date.strftime("%Y-%m-%d")
+                    weekday_str = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][cell_date.weekday()]
+                    hours = day_info.get("hours", 0.0)
+                    score = day_info.get("score", 0.0)
+                    count = day_info.get("activities", 0)
+                    if hours > 0:
+                        self.setToolTip(f"📅 {date_str} ({weekday_str})\n⏱️ 记录时长: {hours:.1f} 小时\n⚡ 生产力得分: {score:.0f}%\n📊 记录活动: {count} 项\n💡 点击直达当日时间轴")
+                    else:
+                        self.setToolTip(f"📅 {date_str} ({weekday_str})\n暂无活动记录\n💡 点击直达当日时间轴")
+                    self.update()
+                return
+        if self._hovered_index != -1:
+            self._hovered_index = -1
+            self.setToolTip("")
+            self.update()
+            
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pos = event.position()
+            for rect, cell_date, _ in self._cells:
+                if rect.contains(pos):
+                    self.date_clicked.emit(cell_date)
+                    return
+        super().mousePressEvent(event)
+        
+    def leaveEvent(self, event):
+        if self._hovered_index != -1:
+            self._hovered_index = -1
+            self.setToolTip("")
+            self.update()
+    
+    def keyPressEvent(self, event):
+        """方向键在方阵中移动，Enter/空格打开当天时间轴"""
+        key = event.key()
+        if key == Qt.Key_Left:
+            self._move_focus(-1)
+        elif key == Qt.Key_Right:
+            self._move_focus(1)
+        elif key == Qt.Key_Up:
+            self._move_focus(-7)
+        elif key == Qt.Key_Down:
+            self._move_focus(7)
+        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            if 0 <= self._focus_index < len(self._cells):
+                self.date_clicked.emit(self._cells[self._focus_index][1])
+        elif key == Qt.Key_Home:
+            self._focus_index = 0
+            self.setAccessibleDescription(self._cell_description(0))
+            self.update()
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
 
 
 class WeekCompareWidget(QWidget):
@@ -1112,7 +1336,7 @@ class WeekCompareWidget(QWidget):
             # 类别颜色
             color_box = QLabel()
             color_box.setFixedSize(10, 10)
-            color_box.setStyleSheet(f"background-color: {CATEGORY_COLORS.get(cat, '#94A3B8')}; border-radius: 2px;")
+            color_box.setStyleSheet(f"background-color: {get_category_color(cat)}; border-radius: 2px;")
             row.addWidget(color_box)
             
             # 类别名
@@ -1132,10 +1356,10 @@ class WeekCompareWidget(QWidget):
             diff = this_val - last_val
             if diff > 0:
                 diff_text = f"↑ +{diff:.0f}m"
-                diff_color = "#10B981"
+                diff_color = t.success
             elif diff < 0:
                 diff_text = f"↓ {diff:.0f}m"
-                diff_color = "#EF4444"
+                diff_color = t.error
             else:
                 diff_text = "—"
                 diff_color = t.text_muted
@@ -1197,10 +1421,10 @@ class WeekCompareWidget(QWidget):
             percent = (diff / last_val) * 100
             if diff > 0:
                 change_text = f"↑ {percent:.0f}%"
-                change_color = "#10B981"
+                change_color = t.success
             elif diff < 0:
                 change_text = f"↓ {abs(percent):.0f}%"
-                change_color = "#EF4444"
+                change_color = t.error
             else:
                 change_text = "持平"
                 change_color = t.text_muted
@@ -1340,7 +1564,7 @@ class DateCompareWidget(QWidget):
             color_box = QLabel()
             color_box.setFixedSize(10, 10)
             color_box.setStyleSheet(
-                f"background-color: {CATEGORY_COLORS.get(cat, '#94A3B8')}; border-radius: 2px;"
+                f"background-color: {get_category_color(cat)}; border-radius: 2px;"
             )
             row.addWidget(color_box)
             
@@ -1360,10 +1584,10 @@ class DateCompareWidget(QWidget):
             # 差异
             if diff > 0:
                 diff_text = f"↑ +{diff:.0f}m"
-                diff_color = "#10B981"
+                diff_color = t.success
             elif diff < 0:
                 diff_text = f"↓ {diff:.0f}m"
-                diff_color = "#EF4444"
+                diff_color = t.error
             else:
                 diff_text = "="
                 diff_color = t.text_muted
@@ -1445,42 +1669,83 @@ class AppUsageListWidget(QWidget):
         t = get_theme()
         
         total_minutes = sum(m for _, m in self._data) or 1
-        top_items = self._data[:10]  # 只展示前 10 个
+        top_items = self._data[:10]  # 展示前 10 个
         
-        for name, minutes in top_items:
+        for idx, (name, minutes) in enumerate(top_items):
+            rank = idx + 1
             row = QWidget()
             row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setContentsMargins(0, 3, 0, 3)
             row_layout.setSpacing(10)
             
+            # 1. 排名徽章
+            rank_label = QLabel(f"#{rank}")
+            rank_label.setFixedWidth(34)
+            rank_label.setAlignment(Qt.AlignCenter)
+            if rank == 1:
+                rank_style = f"background-color: {t.accent_light}; color: {t.accent}; font-weight: 600;"
+            elif rank == 2:
+                rank_style = f"background-color: {t.bg_tertiary}; color: {t.text_secondary}; font-weight: 600;"
+            elif rank == 3:
+                rank_style = f"background-color: {t.bg_tertiary}; color: {t.text_muted}; font-weight: 600;"
+            else:
+                rank_style = f"background-color: {t.bg_tertiary}; color: {t.text_muted};"
+            rank_label.setStyleSheet(f"border-radius: 6px; font-size: 11px; padding: 2px 4px; {rank_style}")
+            row_layout.addWidget(rank_label)
+            
+            # 2. 应用缩写图标 (24x24)
+            initial = (name[:2] if len(name) >= 2 else name).upper()
+            avatar = QLabel(initial)
+            avatar.setFixedSize(24, 24)
+            avatar.setAlignment(Qt.AlignCenter)
+            avatar.setStyleSheet(f"""
+                background-color: {t.bg_tertiary};
+                color: {t.text_primary};
+                border-radius: 6px;
+                font-size: 10px;
+                font-weight: bold;
+            """)
+            row_layout.addWidget(avatar)
+            
+            # 3. 应用名称
             name_label = QLabel(name or "未命名")
-            name_label.setFixedWidth(160)
-            name_label.setStyleSheet(f"color: {t.text_primary}; font-size: 12px;")
+            name_label.setFixedWidth(140)
+            name_label.setStyleSheet(f"color: {t.text_primary}; font-size: 12.5px; font-weight: 500;")
             row_layout.addWidget(name_label)
             
+            # 4. 进度条
             bar = QProgressBar()
             bar.setRange(0, 100)
             percent = minutes / total_minutes * 100
             bar.setValue(int(percent))
             bar.setTextVisible(False)
-            bar.setFixedHeight(12)
+            bar.setFixedHeight(10)
+            
+            bar_color = t.accent if rank > 3 else (t.warning if rank == 1 else (t.text_muted if rank == 2 else t.error))
             bar.setStyleSheet(f"""
                 QProgressBar {{
                     background-color: {t.bg_tertiary};
                     border: none;
-                    border-radius: 6px;
+                    border-radius: 5px;
                 }}
                 QProgressBar::chunk {{
-                    background-color: {t.accent};
-                    border-radius: 6px;
+                    background-color: {bar_color};
+                    border-radius: 5px;
                 }}
             """)
             row_layout.addWidget(bar, 1)
             
+            # 5. 百分比与时长
+            percent_label = QLabel(f"{percent:.1f}%")
+            percent_label.setFixedWidth(46)
+            percent_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            percent_label.setStyleSheet(f"color: {t.text_muted}; font-size: 11.5px;")
+            row_layout.addWidget(percent_label)
+            
             time_label = QLabel(self._format_minutes(minutes))
-            time_label.setFixedWidth(70)
+            time_label.setFixedWidth(64)
             time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            time_label.setStyleSheet(f"color: {t.text_secondary}; font-size: 12px;")
+            time_label.setStyleSheet(f"color: {t.text_primary}; font-size: 12px; font-weight: 600;")
             row_layout.addWidget(time_label)
             
             container = QWidget()
@@ -1504,6 +1769,8 @@ class AppUsageListWidget(QWidget):
 
 class StatsPanel(QWidget):
     """数据统计面板 - 主容器"""
+    
+    date_clicked = Signal(datetime)  # 点击打卡方格跳转日期
     
     def __init__(self, storage: StorageManager, parent=None):
         super().__init__(parent)
@@ -1577,6 +1844,13 @@ class StatsPanel(QWidget):
         self.line_chart = LineChartWidget()
         trend_section.layout().addWidget(self.line_chart)
         left_col.addWidget(trend_section)
+        
+        # 35天连续生产力打卡方阵
+        contribution_section = self._create_section("35天连续生产力打卡方阵")
+        self.contribution_grid = ContributionGridWidget()
+        self.contribution_grid.date_clicked.connect(self.date_clicked.emit)
+        contribution_section.layout().addWidget(self.contribution_grid)
+        left_col.addWidget(contribution_section)
         
         # 时段效率热力图
         heatmap_section = self._create_section("时段效率分布")
@@ -1824,7 +2098,7 @@ class StatsPanel(QWidget):
             # 更新环形图
             donut_data = []
             for cat, minutes in sorted(category_minutes.items(), key=lambda x: x[1], reverse=True):
-                color = CATEGORY_COLORS.get(cat, "#94A3B8")
+                color = get_category_color(cat)
                 donut_data.append((cat, minutes, color))
             
             center_text = f"{total_hours:.1f}h"
@@ -1850,6 +2124,22 @@ class StatsPanel(QWidget):
                     total_minutes = sum(m for s, m in items)
                     heatmap_data[hour] = (avg_score, total_minutes)
             self.heatmap_widget.set_data(heatmap_data)
+            
+            # 更新 35 天生产力打卡方阵数据
+            contribution_data = {}
+            for d in range(35):
+                d_date = today - timedelta(days=d)
+                d_str = d_date.strftime("%Y-%m-%d")
+                d_cards = self.storage.get_cards_for_date(d_date)
+                d_hours = sum(c.duration_minutes for c in d_cards) / 60.0
+                d_scores = [c.productivity_score for c in d_cards if c.productivity_score > 0]
+                d_avg_score = sum(d_scores) / len(d_scores) if d_scores else 0.0
+                contribution_data[d_str] = {
+                    "hours": d_hours,
+                    "score": d_avg_score,
+                    "activities": len(d_cards)
+                }
+            self.contribution_grid.set_data(contribution_data)
             
             # 更新周对比
             self.week_compare_widget.load_data()

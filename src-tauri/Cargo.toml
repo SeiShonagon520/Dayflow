@@ -1,0 +1,42 @@
+[package]
+name = "dayflow"
+version = "1.6.0"
+description = "AI 驱动的智能时间追踪与生产力分析工具"
+authors = ["Dayflow"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "dayflow_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Job Object 用来在退出时连带收掉 sidecar 的子进程树。
+# Win32_Security 是 CreateJobObjectW 的隐式依赖 —— 缺了它整个函数不存在。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[features]
+# 默认关闭，release 构建用 --features custom-protocol
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

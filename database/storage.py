@@ -5,6 +5,7 @@ import sqlite3
 import json
 import logging
 import threading
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional
@@ -51,7 +52,14 @@ class StorageManager:
     
     def _init_database(self):
         """初始化数据库结构"""
-        schema_path = Path(__file__).parent / "schema.sql"
+        if getattr(sys, "frozen", False):
+            base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+            schema_path = base_dir / "database" / "schema.sql"
+            if not schema_path.exists():
+                schema_path = Path(__file__).parent / "schema.sql"
+        else:
+            schema_path = Path(__file__).parent / "schema.sql"
+            
         with self._get_connection() as conn:
             with open(schema_path, "r", encoding="utf-8") as f:
                 conn.executescript(f.read())
@@ -159,6 +167,24 @@ class StorageManager:
             )
             return [self._row_to_chunk(row) for row in cursor.fetchall()]
     
+    def has_chunks_for_date(self, date_str: str) -> bool:
+        """
+        判断某一天是否录过屏（存在视频切片）。
+
+        用于区分「今天还没开始录」和「录了但分析不出活动」两种空状态 ——
+        两者的引导文案完全不同，猜错会让用户以为程序坏了。
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT 1 FROM chunks
+                WHERE substr(start_time, 1, 10) = ?
+                LIMIT 1
+                """,
+                (date_str,)
+            )
+            return cursor.fetchone() is not None
+
     def update_chunk_status(self, chunk_id: int, status: ChunkStatus, batch_id: Optional[int] = None):
         """更新切片状态"""
         with self._get_connection() as conn:
@@ -370,7 +396,13 @@ class StorageManager:
         """删除时间轴卡片"""
         try:
             with self._get_connection() as conn:
-                conn.execute("DELETE FROM timeline_cards WHERE id = ?", (card_id,))
+                cur = conn.execute(
+                    "DELETE FROM timeline_cards WHERE id = ?", (card_id,))
+                # 必须看 rowcount：删不存在的行时 rowcount 是 0，
+                # 照旧返回 True 会让接口对不存在的卡片也报「成功」，
+                # 前端据此提示删除完成，界面就和数据库不一致了。
+                if cur.rowcount == 0:
+                    return False
                 logger.info(f"已删除卡片 {card_id}")
                 return True
         except Exception as e:

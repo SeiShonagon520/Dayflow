@@ -4,7 +4,7 @@ Dayflow Windows - 窗口信息追踪模块
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,9 @@ class WindowTracker:
     
     def __init__(self):
         self._available = WINDOWS_API_AVAILABLE
+        # PID -> 进程名 缓存，避免每秒重复调用 psutil.Process(pid)
+        self._pid_cache: Dict[int, str] = {}
+        self._pid_cache_max_size = 256
         # 应用名称映射表，用于标准化常见应用名称
         self._app_name_map = {
             "code": "Visual Studio Code",
@@ -114,12 +117,8 @@ class WindowTracker:
             # 获取进程 ID
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             
-            # 获取进程名
-            try:
-                process = psutil.Process(pid)
-                app_name = process.name()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                app_name = "Unknown"
+            # 获取进程名（使用带缓存的方法）
+            app_name = self.get_process_name(pid)
             
             return WindowInfo(
                 app_name=app_name,
@@ -130,6 +129,23 @@ class WindowTracker:
         except Exception as e:
             logger.debug(f"获取窗口信息失败: {e}")
             return None
+
+    def get_process_name(self, pid: int) -> str:
+        """根据 PID 获取进程名（带缓存，避免频繁创建 psutil.Process）"""
+        if pid in self._pid_cache:
+            return self._pid_cache[pid]
+
+        try:
+            process = psutil.Process(pid)
+            app_name = process.name()
+            if len(self._pid_cache) >= self._pid_cache_max_size:
+                self._pid_cache.clear()
+            self._pid_cache[pid] = app_name
+            return app_name
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return "Unknown"
+        except Exception:
+            return "Unknown"
     
     def get_friendly_app_name(self, window_info: Optional[WindowInfo]) -> str:
         """

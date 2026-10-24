@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 # 版本信息
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 GITHUB_REPO = "SeiShonagon520/Dayflow"
 
 # API 配置 (OpenAI 兼容格式)
@@ -37,6 +37,21 @@ AUTO_DELETE_ANALYZED_CHUNKS = True  # 分析完成后自动删除视频切片（
 CHUNKS_MAX_SIZE_GB = 5  # 缓存上限（GB），超过时自动清理最旧文件
 CUSTOM_CHUNKS_DIR = ""  # 自定义切片路径，空字符串表示使用默认路径
 
+# 隐私保护配置
+PRIVACY_PROTECTION_ENABLED = True  # 是否启用敏感窗口隐私防护
+PRIVACY_ACTION = "blur"  # 触发敏感规则时的画面处理方式: "blur"(模糊), "blackout"(黑屏), "pause"(暂停)
+PRIVACY_APP_BLACKLIST = [  # 敏感应用进程名黑名单（小写，不带.exe）
+    "1password", "bitwarden", "keepass", "keepassxc", "enpass",
+    "lastpass", "authenticator", "totp", "dashlane", "nordpass"
+]
+PRIVACY_TITLE_KEYWORDS = [  # 敏感窗口标题关键词（小写）
+    "无痕", "私密浏览", "inprivate", "incognito", "private browsing",
+    "密码", "password", "网银", "网上银行", "bank", "token", "secret"
+]
+
+# 本地模型配置 (Ollama)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
 # 性能监控配置（开发/调试用）
 ENABLE_PERFORMANCE_MONITOR = False  # 是否启用性能监控
 PERFORMANCE_MONITOR_INTERVAL = 5.0  # 监控间隔（秒）
@@ -61,12 +76,11 @@ APP_DATA_DIR = _get_app_data_dir()
 CHUNKS_DIR = Path(CUSTOM_CHUNKS_DIR) if CUSTOM_CHUNKS_DIR else APP_DATA_DIR / "chunks"
 DATABASE_PATH = APP_DATA_DIR / "dayflow.db"
 
-# 确保目录存在
-APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
-CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_directories():
+    """确保应用数据目录和切片目录存在"""
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
 
-# 打印数据目录路径（用于调试）
-print(f"[Dayflow] 数据目录: {APP_DATA_DIR}")
 
 # UI 配置
 WINDOW_TITLE = "Dayflow"

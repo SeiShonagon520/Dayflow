@@ -1,801 +1,968 @@
-"""
-Dayflow Windows - API 交互层
-使用 OpenAI 兼容格式调用心流 API
-"""
-import asyncio
-import base64
-import json
-import logging
-import re
-from pathlib import Path
-from typing import List, Optional, Dict
-from datetime import datetime
-from urllib.parse import unquote
-
-import httpx
-import cv2
-
-import config
-from core.types import Observation, ActivityCard, AppSite, Distraction
-
-logger = logging.getLogger(__name__)
-
-# 系统提示词
-TRANSCRIBE_SYSTEM_PROMPT = """你是屏幕活动分析助手。根据截图和窗口信息，描述用户的具体行为。
-
-返回 JSON 格式：
-{
-  "observations": [
-    {"start_ts": 0, "end_ts": 10, "text": "编写 Python 代码，实现用户登录功能"}
-  ]
-}
-
-规则：
-- start_ts/end_ts 是相对秒数
-- text 只描述行为（写什么代码、看什么内容、做什么操作），不要写应用名称
-- 优先参考窗口标题里的文件名、网页标题、文档名、聊天对象来提高描述精度
-- 如果能判断具体正在编辑/查看的文件或页面，请在 text 中自然体现
-- 只返回 JSON"""
-
-DAILY_REPORT_SYSTEM_PROMPT = """你是专业的个人工作报告生成助手。根据用户一天的活动记录数据，生成每日工作总结。
-
-## 核心原则
-1. 基于证据：所有总结必须严格基于提供的活动数据，不得虚构
-2. 智能聚合：将相关活动合并分析，避免流水账
-3. 价值导向：突出学习成果、完成事项、重要决策
-4. 深度分析：不仅记录"做了什么"，更要分析"学到了什么"、"效率如何"
-5. 叙述风格：用连贯的段落和自然语言表达
-
-## 输出格式（严格 Markdown）
-
-# 📋 工作日报 - {date}
-
-## 📊 今日概览
-用 2-3 句话高度概括今天的工作重点和主要成果。
-
-## ⏱️ 时间分配分析
-分析各类活动的时间占比，使用表格或列表呈现。
-| 类别 | 时长 | 占比 | 说明 |
-|------|------|------|------|
-
-## ✅ 完成事项
-列举今天完成的具体任务和成果，每项说明内容和价值。
-
-## ⏰ 时间线回顾
-按时间段总结主要活动（合并相关活动，突出重点）。
-**上午 (HH:MM - HH:MM)**：主要活动
-**下午 (HH:MM - HH:MM)**：主要活动
-**晚上 (HH:MM - HH:MM)**：主要活动
-
-## 🎯 工作重点与领域
-识别主要投入精力的领域和方向。
-
-## 📈 生产力分析
-基于 productivity_score 分析效率趋势、专注时段、分心模式。
-
-## 🔍 自我评估
-### 做得好的
-值得肯定和保持的方面，用具体事例说明。
-### 待改进的
-需要优化和提升的方面，给出具体建议。
-
-## 💡 洞察与建议
-基于今日数据给出 1-2 条具体可操作的改进建议。
-
-## 质量标准
-- 深度 > 广度：宁可深入分析几个重点，也不要泛泛罗列
-- 洞察 > 记录：提供有价值的分析和反思
-- 具体 > 抽象：用具体事例和细节支撑结论
-"""
-
-GENERATE_CARDS_SYSTEM_PROMPT = """你是时间管理助手。根据观察记录生成活动卡片。
-
-JSON 格式：
-{
-  "cards": [
-    {
-      "category": "编程",
-      "title": "Dayflow 项目开发",
-      "summary": "实现用户登录功能，编写单元测试",
-      "start_time": "2024-01-01T10:00:00",
-      "end_time": "2024-01-01T11:30:00",
-      "app_sites": [{"name": "VS Code", "duration_seconds": 5400}],
-      "distractions": [],
-      "productivity_score": 85
-    }
-  ]
-}
-
-类别定义：
-- 编程：写代码、调试、代码审查
-- 工作：文档、邮件、项目管理、设计
-- 学习：看教程、读文档、做笔记
-- 会议：视频会议、语音通话
-- 社交：聊天、社交媒体
-- 娱乐：视频、游戏、音乐
-- 休息：无明显活动
-- 其他：无法归类
-
-productivity_score 评分标准：
-- 90-100：高度专注的核心工作（编程、写作、设计）
-- 70-89：一般工作（邮件、文档、会议）
-- 50-69：低效工作（频繁切换、碎片化任务）
-- 30-49：轻度娱乐（浏览、社交）
-- 0-29：纯娱乐（游戏、视频）
-
-合并规则：连续相同应用且相似活动 → 合并为一张卡片
-拆分规则：同一时段内切换不同类型活动 → 拆分为多张卡片
-
-跨批次连续性：
-- 如果"前序活动卡片"的最后一张与当前观察记录的开头是同类活动，考虑延续而非新建
-- 检查前序卡片的 category 和 title，如果当前活动是其延续，在 title 中体现连续性
-
-只返回 JSON"""
-
-
-class DayflowBackendProvider:
-    """
-    心流 API 交互类 (OpenAI 兼容格式)
-    使用 Chat Completions 接口进行视频分析
-    """
-
-    FILE_HINT_BLACKLIST = {
-        "visual studio code", "cursor", "google chrome", "microsoft edge", "firefox",
-        "wechat", "qq", "telegram", "discord", "notion", "obsidian", "typora",
-        "microsoft word", "microsoft excel", "powerpoint", "outlook",
-        "文件资源管理器", "windows terminal", "powershell", "cmd", "unknown"
-    }
-    
-    def __init__(
-        self,
-        api_base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        timeout: float = 120.0
-    ):
-        self.api_base_url = (api_base_url or config.API_BASE_URL).rstrip("/")
-        self.api_key = api_key or config.API_KEY
-        self.model = model or config.API_MODEL
-        self.timeout = timeout
-        
-        self._client: Optional[httpx.AsyncClient] = None
-    
-    @property
-    def headers(self) -> dict:
-        """请求头"""
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-    
-    async def _get_client(self) -> httpx.AsyncClient:
-        """获取或创建异步 HTTP 客户端"""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
-                headers=self.headers
-            )
-        return self._client
-    
-    async def close(self):
-        """关闭 HTTP 客户端"""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
-    
-    def _extract_frames_from_video(self, video_path: str, max_frames: int = 10) -> List[str]:
-        """
-        从视频中提取关键帧并编码为 base64
-        
-        Args:
-            video_path: 视频文件路径
-            max_frames: 最大提取帧数
-            
-        Returns:
-            List[str]: base64 编码的图片列表
-        """
-        frames_base64 = []
-        
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            logger.error(f"无法打开视频文件: {video_path}")
-            return frames_base64
-        
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames == 0:
-            cap.release()
-            return frames_base64
-        
-        # 均匀采样帧
-        frame_indices = [int(i * total_frames / max_frames) for i in range(max_frames)]
-        
-        for idx in frame_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            
-            # 压缩图片以减少传输大小
-            frame = cv2.resize(frame, (1280, 720))
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            base64_image = base64.b64encode(buffer).decode('utf-8')
-            frames_base64.append(base64_image)
-        
-        cap.release()
-        return frames_base64
-    
-    def _extract_message_content(self, message_content) -> str:
-        """兼容不同 OpenAI/Gemini 兼容服务的 message.content 返回格式。"""
-        if isinstance(message_content, str):
-            return message_content
-
-        if isinstance(message_content, list):
-            parts = []
-            for item in message_content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict):
-                    # 常见兼容格式：{"type":"text","text":"..."}
-                    text = item.get("text")
-                    if text:
-                        parts.append(text)
-            return "\n".join(parts).strip()
-
-        if message_content is None:
-            return ""
-
-        return str(message_content)
-
-    def _extract_file_hint(self, window_title: Optional[str], app_name: Optional[str] = None) -> Optional[str]:
-        """从窗口标题中提取较像“文件名/页面标题/文档名”的线索。"""
-        if not window_title:
-            return None
-
-        title = unquote(str(window_title)).strip()
-        if not title:
-            return None
-
-        # 常见编辑器/浏览器标题分隔符
-        candidates = [seg.strip(" -—_|•·[]()") for seg in re.split(r"\s*[\-|—|_|·|•|:：]\s*", title) if seg.strip()]
-        if not candidates:
-            candidates = [title]
-
-        app_name_norm = (app_name or "").strip().lower()
-
-        scored = []
-        for part in candidates:
-            part_norm = part.strip().lower()
-            if not part_norm:
-                continue
-            if len(part_norm) <= 1:
-                continue
-            if part_norm == app_name_norm:
-                continue
-            if part_norm in self.FILE_HINT_BLACKLIST:
-                continue
-
-            score = 0
-            if re.search(r"\.[a-z0-9]{1,8}$", part_norm):
-                score += 4  # 像文件名
-            if any(ch in part for ch in ('/', '\\')):
-                score += 3  # 像路径
-            if re.search(r"[\u4e00-\u9fffA-Za-z0-9].{2,}", part):
-                score += 1
-            if len(part) >= 6:
-                score += 1
-            if 'github' in app_name_norm or 'code' in app_name_norm or 'cursor' in app_name_norm:
-                score += 1
-
-            scored.append((score, part.strip()))
-
-        if not scored:
-            return None
-
-        best_score, best_part = max(scored, key=lambda x: x[0])
-        if best_score < 2:
-            return None
-
-        return best_part[:200]
-
-    async def _chat_completion(
-        self,
-        messages: List[dict],
-        temperature: float = 0.3
-    ) -> str:
-        """
-        调用 Chat Completions API
-        
-        Args:
-            messages: 消息列表
-            temperature: 温度参数
-            
-        Returns:
-            str: 模型返回的内容
-        """
-        client = await self._get_client()
-        
-        request_body = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": 4096
-        }
-        
-        try:
-            response = await client.post(
-                f"{self.api_base_url}/chat/completions",
-                json=request_body
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            choices = result.get("choices") or []
-            if not choices:
-                raise ValueError(f"响应中缺少 choices: {result}")
-
-            message = choices[0].get("message") or {}
-            content = self._extract_message_content(message.get("content"))
-            if content:
-                return content
-
-            # 兼容部分服务把文本放在顶层 text / output_text
-            fallback_text = choices[0].get("text") or result.get("output_text") or ""
-            if fallback_text:
-                return fallback_text
-
-            raise ValueError(f"无法从响应中提取文本内容: {result}")
-            
-        except httpx.HTTPStatusError as e:
-            logger.error(f"API 请求失败: {e.response.status_code} - {e.response.text}")
-            raise
-        except Exception as e:
-            logger.error(f"API 请求异常: {e}")
-            raise
-    
-    async def transcribe_video(
-        self,
-        video_path: str,
-        duration: float,
-        prompt: Optional[str] = None,
-        window_records: Optional[List[Dict]] = None
-    ) -> List[Observation]:
-        """
-        分析视频切片，获取观察记录
-        
-        Args:
-            video_path: 视频文件路径
-            duration: 视频时长（秒）
-            prompt: 额外提示词（可选）
-            window_records: 窗口记录列表（可选）
-            
-        Returns:
-            List[Observation]: 观察记录列表
-        """
-        video_file = Path(video_path)
-        if not video_file.exists():
-            raise FileNotFoundError(f"视频文件不存在: {video_path}")
-        
-        # 提取视频帧
-        frames = self._extract_frames_from_video(video_path, max_frames=8)
-        if not frames:
-            logger.warning(f"无法从视频提取帧: {video_path}")
-            return []
-        
-        # 构建窗口信息文本（包含窗口标题/文件名/页面标题）
-        window_info_text = ""
-        if window_records:
-            window_info_text = "\n\n窗口信息（窗口标题里可能包含文件名、网页标题、聊天对象、文档名）：\n"
-            # 按时间段聚合相同的应用
-            current_app = None
-            current_title = None
-            current_start = 0
-            for record in window_records:
-                app_name = record.get("app_name", "Unknown")
-                window_title = record.get("window_title", "")
-                if app_name != current_app or window_title != current_title:
-                    if current_app:
-                        title_part = f": {current_title}" if current_title else ""
-                        window_info_text += f"- [{current_start:.0f}s - {record['timestamp']:.0f}s] {current_app}{title_part}\n"
-                    current_app = app_name
-                    current_title = window_title
-                    current_start = record.get("timestamp", 0)
-            # 添加最后一个
-            if current_app:
-                title_part = f": {current_title}" if current_title else ""
-                window_info_text += f"- [{current_start:.0f}s - {duration:.0f}s] {current_app}{title_part}\n"
-        
-        # 构建消息内容（包含多张图片）
-        content = []
-        content.append({
-            "type": "text",
-            "text": f"以下是一段 {duration:.0f} 秒屏幕录制的 {len(frames)} 个关键帧，请分析用户的活动。{window_info_text}{prompt or ''}"
-        })
-        
-        for i, frame_base64 in enumerate(frames):
-            content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{frame_base64}",
-                    "detail": "low"
-                }
-            })
-        
-        messages = [
-            {"role": "system", "content": TRANSCRIBE_SYSTEM_PROMPT},
-            {"role": "user", "content": content}
-        ]
-        
-        try:
-            response_text = await self._chat_completion(messages)
-            observations = self._parse_observations_from_text(response_text, duration)
-            
-            # 后处理：用真实窗口信息覆盖 AI 返回的 app_name
-            if window_records and observations:
-                observations = self._apply_window_records(observations, window_records, duration)
-            
-            return observations
-        except Exception as e:
-            logger.error(f"视频分析失败: {e}")
-            return []
-    
-    def _apply_window_records(
-        self, 
-        observations: List[Observation], 
-        window_records: List[Dict],
-        duration: float
-    ) -> List[Observation]:
-        """
-        用真实窗口记录覆盖 AI 返回的 app_name
-        
-        根据时间戳匹配，找到每个 observation 对应时间段内使用最多的应用
-        """
-        if not window_records:
-            return observations
-        
-        # 预处理：构建时间段到应用的映射
-        # 格式: [(start_ts, end_ts, app_name, window_title), ...]
-        time_segments = []
-        current_app = None
-        current_title = None
-        current_start = 0
-        
-        for record in window_records:
-            app_name = record.get("app_name", "Unknown")
-            window_title = record.get("window_title", "")
-            timestamp = record.get("timestamp", 0)
-            
-            if app_name != current_app:
-                if current_app:
-                    time_segments.append((current_start, timestamp, current_app, current_title))
-                current_app = app_name
-                current_title = window_title
-                current_start = timestamp
-        
-        # 添加最后一个时间段
-        if current_app:
-            time_segments.append((current_start, duration, current_app, current_title))
-        
-        # 为每个 observation 找到对应的应用
-        for obs in observations:
-            obs_start = obs.start_ts
-            obs_end = obs.end_ts
-            
-            # 统计这个时间段内各应用的占用时长
-            app_durations: Dict[str, float] = {}
-            app_titles: Dict[str, str] = {}
-            
-            for seg_start, seg_end, app_name, window_title in time_segments:
-                # 计算重叠时间
-                overlap_start = max(obs_start, seg_start)
-                overlap_end = min(obs_end, seg_end)
-                
-                if overlap_end > overlap_start:
-                    overlap_duration = overlap_end - overlap_start
-                    app_durations[app_name] = app_durations.get(app_name, 0) + overlap_duration
-                    if app_name not in app_titles:
-                        app_titles[app_name] = window_title
-            
-            # 找到占用时间最长的应用
-            if app_durations:
-                main_app = max(app_durations, key=app_durations.get)
-                obs.app_name = main_app
-                obs.window_title = app_titles.get(main_app, obs.window_title)
-                obs.file_hint = self._extract_file_hint(obs.window_title, main_app)
-                logger.debug(f"后处理: [{obs_start:.0f}s-{obs_end:.0f}s] app_name -> {main_app}, file_hint -> {obs.file_hint}")
-        
-        return observations
-    
-    async def generate_activity_cards(
-        self,
-        observations: List[Observation],
-        context_cards: Optional[List[ActivityCard]] = None,
-        start_time: Optional[datetime] = None,
-        prompt: Optional[str] = None
-    ) -> List[ActivityCard]:
-        """
-        根据观察记录生成时间轴卡片
-        
-        Args:
-            observations: 观察记录列表
-            context_cards: 前序卡片（用于上下文）
-            start_time: 开始时间
-            prompt: 额外提示词（可选）
-            
-        Returns:
-            List[ActivityCard]: 活动卡片列表
-        """
-        if not observations:
-            return []
-        
-        # 构建观察记录文本
-        obs_text = "观察记录：\n"
-        for obs in observations:
-            obs_text += f"- [{obs.start_ts:.0f}s - {obs.end_ts:.0f}s] {obs.text}"
-            extras = []
-            if obs.app_name:
-                extras.append(f"应用: {obs.app_name}")
-            if obs.file_hint:
-                extras.append(f"文件/页面线索: {obs.file_hint}")
-            elif obs.window_title:
-                extras.append(f"窗口标题: {obs.window_title[:120]}")
-            if extras:
-                obs_text += f" ({'；'.join(extras)})"
-            obs_text += "\n"
-        
-        # 添加时间上下文
-        if start_time:
-            obs_text += f"\n录制开始时间: {start_time.isoformat()}"
-        
-        # 添加前序卡片上下文
-        if context_cards:
-            obs_text += "\n\n前序活动卡片：\n"
-            for card in context_cards[-3:]:  # 只取最近3个
-                obs_text += f"- {card.category}: {card.title}\n"
-        
-        if prompt:
-            obs_text += f"\n{prompt}"
-        
-        messages = [
-            {"role": "system", "content": GENERATE_CARDS_SYSTEM_PROMPT},
-            {"role": "user", "content": obs_text}
-        ]
-        
-        try:
-            response_text = await self._chat_completion(messages)
-            return self._parse_cards_from_text(response_text, start_time)
-        except Exception as e:
-            logger.error(f"卡片生成失败: {e}")
-            return []
-
-    async def generate_daily_report(
-        self,
-        cards: List[ActivityCard],
-        date_str: str
-    ) -> str:
-        """
-        根据活动卡片列表生成每日工作报告（Markdown 格式）
-
-        Args:
-            cards: 当日活动卡片列表
-            date_str: 日期字符串（如 "2026-05-15"）
-
-        Returns:
-            str: Markdown 格式的日报内容
-        """
-        if not cards:
-            return f"# 📋 工作日报 - {date_str}\n\n当日无活动记录数据。"
-
-        # 构建活动数据文本
-        data_text = f"日期：{date_str}\n\n活动记录（共 {len(cards)} 条）：\n"
-
-        total_minutes = 0
-        categories = {}
-        for i, card in enumerate(cards, 1):
-            start = card.start_time.strftime("%H:%M") if card.start_time else "??:??"
-            end = card.end_time.strftime("%H:%M") if card.end_time else "??:??"
-            dur = card.duration_minutes
-            total_minutes += dur
-
-            cat = card.category or "未分类"
-            categories[cat] = categories.get(cat, 0) + dur
-
-            apps = ", ".join(a.name for a in card.app_sites[:3]) if card.app_sites else ""
-            distractions = len(card.distractions)
-
-            data_text += (
-                f"\n{i}. [{start}-{end}] {cat} - {card.title}\n"
-                f"   摘要：{card.summary}\n"
-                f"   时长：{dur:.0f}分钟 | 生产力评分：{card.productivity_score:.0f}/100\n"
-            )
-            if apps:
-                data_text += f"   应用：{apps}\n"
-            if distractions > 0:
-                data_text += f"   分心次数：{distractions}\n"
-
-        # 添加统计摘要
-        data_text += f"\n总计记录时长：{total_minutes:.0f} 分钟\n"
-        data_text += "类别分布：\n"
-        for cat, mins in sorted(categories.items(), key=lambda x: -x[1]):
-            pct = mins / total_minutes * 100 if total_minutes > 0 else 0
-            data_text += f"  - {cat}: {mins:.0f}分钟 ({pct:.0f}%)\n"
-
-        messages = [
-            {"role": "system", "content": DAILY_REPORT_SYSTEM_PROMPT},
-            {"role": "user", "content": data_text}
-        ]
-
-        try:
-            return await self._chat_completion(messages, temperature=0.7)
-        except Exception as e:
-            logger.error(f"日报生成失败: {e}")
-            raise
-    
-    def _parse_observations_from_text(self, text: str, duration: float) -> List[Observation]:
-        """从文本响应中解析观察记录"""
-        observations = []
-        
-        try:
-            # 尝试提取 JSON
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                data = json.loads(json_match.group())
-                items = data.get("observations", [])
-                
-                for item in items:
-                    obs = Observation(
-                        start_ts=float(item.get("start_ts", 0)),
-                        end_ts=float(item.get("end_ts", duration)),
-                        text=item.get("text", ""),
-                        app_name=item.get("app_name"),
-                        window_title=item.get("window_title"),
-                        file_hint=item.get("file_hint")
-                    )
-                    observations.append(obs)
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON 解析失败: {e}, 原文: {text[:200]}")
-            # 如果 JSON 解析失败，创建一个基于整段文本的观察记录
-            observations.append(Observation(
-                start_ts=0,
-                end_ts=duration,
-                text=text[:500]
-            ))
-        
-        return observations
-    
-    def _parse_cards_from_text(self, text: str, start_time: Optional[datetime]) -> List[ActivityCard]:
-        """从文本响应中解析活动卡片"""
-        cards = []
-        
-        try:
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                data = json.loads(json_match.group())
-                items = data.get("cards", [])
-                
-                for item in items:
-                    # 解析时间
-                    card_start = None
-                    card_end = None
-                    
-                    if item.get("start_time"):
-                        try:
-                            card_start = datetime.fromisoformat(item["start_time"].replace("Z", "+00:00"))
-                        except:
-                            card_start = start_time
-                    else:
-                        card_start = start_time
-                    
-                    if item.get("end_time"):
-                        try:
-                            card_end = datetime.fromisoformat(item["end_time"].replace("Z", "+00:00"))
-                        except:
-                            pass
-                    
-                    # 解析应用列表
-                    app_sites = []
-                    for app in item.get("app_sites", []):
-                        app_sites.append(AppSite(
-                            name=app.get("name", ""),
-                            duration_seconds=app.get("duration_seconds", 0)
-                        ))
-                    
-                    # 解析分心记录
-                    distractions = []
-                    for dist in item.get("distractions", []):
-                        distractions.append(Distraction(
-                            description=dist.get("description", ""),
-                            timestamp=dist.get("timestamp", 0),
-                            duration_seconds=dist.get("duration_seconds", 0)
-                        ))
-                    
-                    card = ActivityCard(
-                        category=item.get("category", "其他"),
-                        title=item.get("title", "未命名活动"),
-                        summary=item.get("summary", ""),
-                        start_time=card_start,
-                        end_time=card_end,
-                        app_sites=app_sites,
-                        distractions=distractions,
-                        productivity_score=float(item.get("productivity_score", 0))
-                    )
-                    cards.append(card)
-                    
-        except json.JSONDecodeError as e:
-            logger.warning(f"卡片 JSON 解析失败: {e}")
-        
-        return cards
-    
-    async def health_check(self) -> bool:
-        """检查 API 连接状态"""
-        try:
-            messages = [{"role": "user", "content": "hi"}]
-            await self._chat_completion(messages)
-            return True
-        except Exception as e:
-            logger.warning(f"API 健康检查失败: {e}")
-            return False
-    
-    async def test_connection(self) -> tuple[bool, str]:
-        """
-        测试 API 连接
-        
-        Returns:
-            tuple[bool, str]: (是否成功, 消息)
-        """
-        if not self.api_key:
-            return False, "API Key 未配置"
-        
-        try:
-            messages = [{"role": "user", "content": "你好，请回复'测试成功'"}]
-            response = await self._chat_completion(messages)
-            return True, f"连接成功！模型: {self.model}\n回复: {response[:100]}"
-        except httpx.HTTPStatusError as e:
-            return False, f"HTTP 错误 {e.response.status_code}: {e.response.text[:200]}"
-        except httpx.ConnectError:
-            return False, "连接失败：无法连接到服务器"
-        except httpx.TimeoutException:
-            return False, "连接超时"
-        except Exception as e:
-            return False, f"错误: {str(e)}"
-
-
-# 便捷函数：同步调用
-def transcribe_video_sync(video_path: str, duration: float, **kwargs) -> List[Observation]:
-    """同步版本的视频分析"""
-    loop = asyncio.new_event_loop()
-    provider = DayflowBackendProvider(**kwargs)
-    try:
-        return loop.run_until_complete(provider.transcribe_video(video_path, duration))
-    finally:
-        loop.run_until_complete(provider.close())
-        loop.close()
-
-
-def generate_cards_sync(
-    observations: List[Observation],
-    context_cards: Optional[List[ActivityCard]] = None,
-    **kwargs
-) -> List[ActivityCard]:
-    """同步版本的卡片生成"""
-    loop = asyncio.new_event_loop()
-    provider = DayflowBackendProvider(**kwargs)
-    try:
-        return loop.run_until_complete(provider.generate_activity_cards(observations, context_cards))
-    finally:
-        loop.run_until_complete(provider.close())
-        loop.close()
-
-
-def generate_daily_report_sync(
-    cards: List[ActivityCard],
-    date_str: str,
-    **kwargs
-) -> str:
-    """同步版本的日报生成"""
-    loop = asyncio.new_event_loop()
-    provider = DayflowBackendProvider(**kwargs)
-    try:
-        return loop.run_until_complete(provider.generate_daily_report(cards, date_str))
-    finally:
-        loop.run_until_complete(provider.close())
-        loop.close()
+"""
+Dayflow Windows - API 交互层
+使用 OpenAI 兼容格式调用心流 API
+"""
+import asyncio
+import base64
+import json
+import logging
+import re
+from pathlib import Path
+from typing import List, Optional, Dict
+from datetime import datetime
+from urllib.parse import unquote
+
+import httpx
+import cv2
+import numpy as np
+
+import config
+from core.types import Observation, ActivityCard, AppSite, Distraction
+
+logger = logging.getLogger(__name__)
+
+# 系统提示词
+TRANSCRIBE_SYSTEM_PROMPT = """你是屏幕活动分析助手。根据截图和窗口信息，描述用户的具体行为。
+
+返回 JSON 格式：
+{
+  "observations": [
+    {"start_ts": 0, "end_ts": 10, "text": "编写 Python 代码，实现用户登录功能"}
+  ]
+}
+
+规则：
+- start_ts/end_ts 是相对秒数
+- text 只描述行为（写什么代码、看什么内容、做什么操作），不要写应用名称
+- 优先参考窗口标题里的文件名、网页标题、文档名、聊天对象来提高描述精度
+- 如果能判断具体正在编辑/查看的文件或页面，请在 text 中自然体现
+- 只返回 JSON"""
+
+DAILY_REPORT_SYSTEM_PROMPT = """你是专业的个人工作报告生成助手。根据用户一天的活动记录数据，生成每日工作总结。
+
+## 核心原则
+1. 基于证据：所有总结必须严格基于提供的活动数据，不得虚构
+2. 智能聚合：将相关活动合并分析，避免流水账
+3. 价值导向：突出学习成果、完成事项、重要决策
+4. 深度分析：不仅记录"做了什么"，更要分析"学到了什么"、"效率如何"
+5. 叙述风格：用连贯的段落和自然语言表达
+
+## 输出格式（严格 Markdown）
+
+# 📋 工作日报 - {date}
+
+## 📊 今日概览
+用 2-3 句话高度概括今天的工作重点和主要成果。
+
+## ⏱️ 时间分配分析
+分析各类活动的时间占比，使用表格或列表呈现。
+| 类别 | 时长 | 占比 | 说明 |
+|------|------|------|------|
+
+## ✅ 完成事项
+列举今天完成的具体任务和成果，每项说明内容和价值。
+
+## ⏰ 时间线回顾
+按时间段总结主要活动（合并相关活动，突出重点）。
+**上午 (HH:MM - HH:MM)**：主要活动
+**下午 (HH:MM - HH:MM)**：主要活动
+**晚上 (HH:MM - HH:MM)**：主要活动
+
+## 🎯 工作重点与领域
+识别主要投入精力的领域和方向。
+
+## 📈 生产力分析
+基于 productivity_score 分析效率趋势、专注时段、分心模式。
+
+## 🔍 自我评估
+### 做得好的
+值得肯定和保持的方面，用具体事例说明。
+### 待改进的
+需要优化和提升的方面，给出具体建议。
+
+## 💡 洞察与建议
+基于今日数据给出 1-2 条具体可操作的改进建议。
+
+## 质量标准
+- 深度 > 广度：宁可深入分析几个重点，也不要泛泛罗列
+- 洞察 > 记录：提供有价值的分析和反思
+- 具体 > 抽象：用具体事例和细节支撑结论
+"""
+
+GENERATE_CARDS_SYSTEM_PROMPT = """你是时间管理助手。根据观察记录生成活动卡片。
+
+JSON 格式：
+{
+  "cards": [
+    {
+      "category": "编程",
+      "title": "Dayflow 项目开发",
+      "summary": "实现用户登录功能，编写单元测试",
+      "start_time": "2024-01-01T10:00:00",
+      "end_time": "2024-01-01T11:30:00",
+      "app_sites": [{"name": "VS Code", "duration_seconds": 5400}],
+      "distractions": [],
+      "productivity_score": 85
+    }
+  ]
+}
+
+类别定义：
+- 编程：写代码、调试、代码审查
+- 工作：文档、邮件、项目管理、设计
+- 学习：看教程、读文档、做笔记
+- 会议：视频会议、语音通话
+- 社交：聊天、社交媒体
+- 娱乐：视频、游戏、音乐
+- 休息：无明显活动
+- 其他：无法归类
+
+productivity_score 评分标准：
+- 90-100：高度专注的核心工作（编程、写作、设计）
+- 70-89：一般工作（邮件、文档、会议）
+- 50-69：低效工作（频繁切换、碎片化任务）
+- 30-49：轻度娱乐（浏览、社交）
+- 0-29：纯娱乐（游戏、视频）
+
+合并规则：连续相同应用且相似活动 → 合并为一张卡片
+拆分规则：同一时段内切换不同类型活动 → 拆分为多张卡片
+
+跨批次连续性：
+- 如果"前序活动卡片"的最后一张与当前观察记录的开头是同类活动，考虑延续而非新建
+- 检查前序卡片的 category 和 title，如果当前活动是其延续，在 title 中体现连续性
+
+只返回 JSON"""
+
+
+class DayflowBackendProvider:
+    """
+    心流 API 交互类 (OpenAI 兼容格式)
+    使用 Chat Completions 接口进行视频分析
+    """
+
+    FILE_HINT_BLACKLIST = {
+        "visual studio code", "cursor", "google chrome", "microsoft edge", "firefox",
+        "wechat", "qq", "telegram", "discord", "notion", "obsidian", "typora",
+        "microsoft word", "microsoft excel", "powerpoint", "outlook",
+        "文件资源管理器", "windows terminal", "powershell", "cmd", "unknown"
+    }
+    
+    def __init__(
+        self,
+        api_base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 120.0
+    ):
+        raw_url = (api_base_url or config.API_BASE_URL).rstrip("/")
+        # 兼容 Ollama：若输入的是 http://localhost:11434 则自动补齐 /v1 OpenAI 端点
+        self.is_ollama = "11434" in raw_url or "ollama" in raw_url.lower()
+        if self.is_ollama and not raw_url.endswith("/v1"):
+            raw_url = f"{raw_url}/v1"
+
+        self.api_base_url = raw_url
+        self.api_key = api_key or config.API_KEY
+        self.model = model or config.API_MODEL
+        # 本地模型通常耗时较长，放宽超时时间
+        if self.is_ollama and timeout == 120.0:
+            self.timeout = 180.0
+        else:
+            self.timeout = timeout
+        
+        self._client: Optional[httpx.AsyncClient] = None
+    
+    @property
+    def headers(self) -> dict:
+        """请求头"""
+        auth = self.api_key or ("ollama" if self.is_ollama else "")
+        h = {"Content-Type": "application/json"}
+        if auth:
+            h["Authorization"] = f"Bearer {auth}"
+        return h
+    
+    async def _get_client(self) -> httpx.AsyncClient:
+        """获取或创建异步 HTTP 客户端"""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                headers=self.headers
+            )
+        return self._client
+    
+    async def close(self):
+        """关闭 HTTP 客户端"""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+    
+    def _extract_frames_from_video(
+        self,
+        video_path: str,
+        max_frames: int = 10,
+        diff_threshold: float = 2.5
+    ) -> List[str]:
+        """
+        从视频中提取关键帧并编码为 base64，支持相似帧去重以节省 Token。
+        
+        Args:
+            video_path: 视频文件路径
+            max_frames: 最大提取帧数
+            diff_threshold: 帧间差异阈值（低分辨率灰度绝对差均值，默认 2.5），
+                            低于该阈值判定为静止/重复帧。设为 <= 0 则不过滤。
+            
+        Returns:
+            List[str]: base64 编码的图片列表（至少保留 1 帧，最多 max_frames 帧）
+        """
+        frames_base64 = []
+        
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logger.error(f"无法打开视频文件: {video_path}")
+            return frames_base64
+        
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames == 0:
+            cap.release()
+            return frames_base64
+        
+        # 均匀采样候选帧索引
+        sample_count = max(max_frames, 1)
+        frame_indices = [int(i * total_frames / sample_count) for i in range(sample_count)]
+        
+        prev_thumb = None
+
+        for idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                continue
+            
+            # 相似度检测：若画面无明显变化则跳过该帧
+            if diff_threshold > 0:
+                thumb = cv2.resize(frame, (64, 36))
+                thumb_gray = cv2.cvtColor(thumb, cv2.COLOR_BGR2GRAY)
+                if prev_thumb is not None:
+                    diff = float(np.mean(np.abs(thumb_gray.astype(np.float32) - prev_thumb.astype(np.float32))))
+                    if diff < diff_threshold:
+                        continue
+                prev_thumb = thumb_gray
+
+            # 压缩图片以减少传输大小
+            resized_frame = cv2.resize(frame, (1280, 720))
+            _, buffer = cv2.imencode('.jpg', resized_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            base64_image = base64.b64encode(buffer).decode('utf-8')
+            frames_base64.append(base64_image)
+            
+            if len(frames_base64) >= max_frames:
+                break
+        
+        cap.release()
+
+        # 兜底保证：至少返回 1 帧用于分析
+        if not frames_base64 and total_frames > 0:
+            cap_fallback = cv2.VideoCapture(video_path)
+            if cap_fallback.isOpened():
+                ret, frame = cap_fallback.read()
+                if ret and frame is not None:
+                    resized_frame = cv2.resize(frame, (1280, 720))
+                    _, buffer = cv2.imencode('.jpg', resized_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    frames_base64.append(base64.b64encode(buffer).decode('utf-8'))
+                cap_fallback.release()
+
+        logger.debug(f"视频抽帧完成: {Path(video_path).name} (总采样 {len(frame_indices)} 帧 -> 提取 {len(frames_base64)} 关键帧)")
+        return frames_base64
+    
+    def _extract_message_content(self, message_content) -> str:
+        """兼容不同 OpenAI/Gemini 兼容服务的 message.content 返回格式。"""
+        if isinstance(message_content, str):
+            return message_content
+
+        if isinstance(message_content, list):
+            parts = []
+            for item in message_content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    # 常见兼容格式：{"type":"text","text":"..."}
+                    text = item.get("text")
+                    if text:
+                        parts.append(text)
+            return "\n".join(parts).strip()
+
+        if message_content is None:
+            return ""
+
+        return str(message_content)
+
+    def _extract_file_hint(self, window_title: Optional[str], app_name: Optional[str] = None) -> Optional[str]:
+        """从窗口标题中提取较像“文件名/页面标题/文档名”的线索。"""
+        if not window_title:
+            return None
+
+        title = unquote(str(window_title)).strip()
+        if not title:
+            return None
+
+        # 常见编辑器/浏览器标题分隔符
+        candidates = [seg.strip(" -—_|•·[]()") for seg in re.split(r"\s*[\-|—|_|·|•|:：]\s*", title) if seg.strip()]
+        if not candidates:
+            candidates = [title]
+
+        app_name_norm = (app_name or "").strip().lower()
+
+        scored = []
+        for part in candidates:
+            part_norm = part.strip().lower()
+            if not part_norm:
+                continue
+            if len(part_norm) <= 1:
+                continue
+            if part_norm == app_name_norm:
+                continue
+            if part_norm in self.FILE_HINT_BLACKLIST:
+                continue
+
+            score = 0
+            if re.search(r"\.[a-z0-9]{1,8}$", part_norm):
+                score += 4  # 像文件名
+            if any(ch in part for ch in ('/', '\\')):
+                score += 3  # 像路径
+            if re.search(r"[\u4e00-\u9fffA-Za-z0-9].{2,}", part):
+                score += 1
+            if len(part) >= 6:
+                score += 1
+            if 'github' in app_name_norm or 'code' in app_name_norm or 'cursor' in app_name_norm:
+                score += 1
+
+            scored.append((score, part.strip()))
+
+        if not scored:
+            return None
+
+        best_score, best_part = max(scored, key=lambda x: x[0])
+        if best_score < 2:
+            return None
+
+        return best_part[:200]
+
+    async def _chat_completion(
+        self,
+        messages: List[dict],
+        temperature: float = 0.3
+    ) -> str:
+        """
+        调用 Chat Completions API
+        
+        Args:
+            messages: 消息列表
+            temperature: 温度参数
+            
+        Returns:
+            str: 模型返回的内容
+        """
+        client = await self._get_client()
+        
+        request_body = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 4096
+        }
+        
+        try:
+            response = await client.post(
+                f"{self.api_base_url}/chat/completions",
+                json=request_body
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            if isinstance(result, dict):
+                if result.get("status") in ("434", 434) or "invalid apikey" in str(result).lower():
+                    raise ValueError("API Key 无效或已过期，请前往「设置」页面检查并更新")
+                if "error" in result and result["error"]:
+                    err = result["error"]
+                    err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                    raise ValueError(f"接口返回错误: {err_msg}")
+
+            choices = result.get("choices") or []
+            if not choices:
+                raise ValueError(f"响应中缺少 choices: {result}")
+
+            message = choices[0].get("message") or {}
+            content = self._extract_message_content(message.get("content"))
+            if content:
+                return content
+
+            # 兼容部分服务把文本放在顶层 text / output_text
+            fallback_text = choices[0].get("text") or result.get("output_text") or ""
+            if fallback_text:
+                return fallback_text
+
+            raise ValueError(f"无法从响应中提取文本内容: {result}")
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"API 请求失败: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"API 请求异常: {e}")
+            raise
+    
+    async def transcribe_video(
+        self,
+        video_path: str,
+        duration: float,
+        prompt: Optional[str] = None,
+        window_records: Optional[List[Dict]] = None
+    ) -> List[Observation]:
+        """
+        分析视频切片，获取观察记录
+        
+        Args:
+            video_path: 视频文件路径
+            duration: 视频时长（秒）
+            prompt: 额外提示词（可选）
+            window_records: 窗口记录列表（可选）
+            
+        Returns:
+            List[Observation]: 观察记录列表
+        """
+        video_file = Path(video_path)
+        if not video_file.exists():
+            raise FileNotFoundError(f"视频文件不存在: {video_path}")
+        
+        # 提取视频帧
+        frames = self._extract_frames_from_video(video_path, max_frames=8)
+        if not frames:
+            logger.warning(f"无法从视频提取帧: {video_path}")
+            return []
+        
+        # 构建窗口信息文本（包含窗口标题/文件名/页面标题）
+        window_info_text = ""
+        if window_records:
+            window_info_text = "\n\n窗口信息（窗口标题里可能包含文件名、网页标题、聊天对象、文档名）：\n"
+            # 按时间段聚合相同的应用
+            current_app = None
+            current_title = None
+            current_start = 0
+            for record in window_records:
+                app_name = record.get("app_name", "Unknown")
+                window_title = record.get("window_title", "")
+                if app_name != current_app or window_title != current_title:
+                    if current_app:
+                        title_part = f": {current_title}" if current_title else ""
+                        window_info_text += f"- [{current_start:.0f}s - {record['timestamp']:.0f}s] {current_app}{title_part}\n"
+                    current_app = app_name
+                    current_title = window_title
+                    current_start = record.get("timestamp", 0)
+            # 添加最后一个
+            if current_app:
+                title_part = f": {current_title}" if current_title else ""
+                window_info_text += f"- [{current_start:.0f}s - {duration:.0f}s] {current_app}{title_part}\n"
+        
+        # 构建消息内容（包含多张图片）
+        content = []
+        content.append({
+            "type": "text",
+            "text": f"以下是一段 {duration:.0f} 秒屏幕录制的 {len(frames)} 个关键帧，请分析用户的活动。{window_info_text}{prompt or ''}"
+        })
+        
+        for i, frame_base64 in enumerate(frames):
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{frame_base64}",
+                    "detail": "low"
+                }
+            })
+        
+        messages = [
+            {"role": "system", "content": TRANSCRIBE_SYSTEM_PROMPT},
+            {"role": "user", "content": content}
+        ]
+        
+        try:
+            response_text = await self._chat_completion(messages)
+            observations = self._parse_observations_from_text(response_text, duration)
+            
+            # 后处理：用真实窗口信息覆盖 AI 返回的 app_name
+            if window_records and observations:
+                observations = self._apply_window_records(observations, window_records, duration)
+            
+            return observations
+        except Exception as e:
+            logger.error(f"视频分析失败: {e}")
+            return []
+    
+    def _apply_window_records(
+        self, 
+        observations: List[Observation], 
+        window_records: List[Dict],
+        duration: float
+    ) -> List[Observation]:
+        """
+        用真实窗口记录覆盖 AI 返回的 app_name
+        
+        根据时间戳匹配，找到每个 observation 对应时间段内使用最多的应用
+        """
+        if not window_records:
+            return observations
+        
+        # 预处理：构建时间段到应用的映射
+        # 格式: [(start_ts, end_ts, app_name, window_title), ...]
+        time_segments = []
+        current_app = None
+        current_title = None
+        current_start = 0
+        
+        for record in window_records:
+            app_name = record.get("app_name", "Unknown")
+            window_title = record.get("window_title", "")
+            timestamp = record.get("timestamp", 0)
+            
+            if app_name != current_app:
+                if current_app:
+                    time_segments.append((current_start, timestamp, current_app, current_title))
+                current_app = app_name
+                current_title = window_title
+                current_start = timestamp
+        
+        # 添加最后一个时间段
+        if current_app:
+            time_segments.append((current_start, duration, current_app, current_title))
+        
+        # 为每个 observation 找到对应的应用
+        for obs in observations:
+            obs_start = obs.start_ts
+            obs_end = obs.end_ts
+            
+            # 统计这个时间段内各应用的占用时长
+            app_durations: Dict[str, float] = {}
+            app_titles: Dict[str, str] = {}
+            
+            for seg_start, seg_end, app_name, window_title in time_segments:
+                # 计算重叠时间
+                overlap_start = max(obs_start, seg_start)
+                overlap_end = min(obs_end, seg_end)
+                
+                if overlap_end > overlap_start:
+                    overlap_duration = overlap_end - overlap_start
+                    app_durations[app_name] = app_durations.get(app_name, 0) + overlap_duration
+                    if app_name not in app_titles:
+                        app_titles[app_name] = window_title
+            
+            # 找到占用时间最长的应用
+            if app_durations:
+                main_app = max(app_durations, key=app_durations.get)
+                obs.app_name = main_app
+                obs.window_title = app_titles.get(main_app, obs.window_title)
+                obs.file_hint = self._extract_file_hint(obs.window_title, main_app)
+                logger.debug(f"后处理: [{obs_start:.0f}s-{obs_end:.0f}s] app_name -> {main_app}, file_hint -> {obs.file_hint}")
+        
+        return observations
+    
+    async def generate_activity_cards(
+        self,
+        observations: List[Observation],
+        context_cards: Optional[List[ActivityCard]] = None,
+        start_time: Optional[datetime] = None,
+        prompt: Optional[str] = None
+    ) -> List[ActivityCard]:
+        """
+        根据观察记录生成时间轴卡片
+        
+        Args:
+            observations: 观察记录列表
+            context_cards: 前序卡片（用于上下文）
+            start_time: 开始时间
+            prompt: 额外提示词（可选）
+            
+        Returns:
+            List[ActivityCard]: 活动卡片列表
+        """
+        if not observations:
+            return []
+        
+        # 构建观察记录文本
+        obs_text = "观察记录：\n"
+        for obs in observations:
+            obs_text += f"- [{obs.start_ts:.0f}s - {obs.end_ts:.0f}s] {obs.text}"
+            extras = []
+            if obs.app_name:
+                extras.append(f"应用: {obs.app_name}")
+            if obs.file_hint:
+                extras.append(f"文件/页面线索: {obs.file_hint}")
+            elif obs.window_title:
+                extras.append(f"窗口标题: {obs.window_title[:120]}")
+            if extras:
+                obs_text += f" ({'；'.join(extras)})"
+            obs_text += "\n"
+        
+        # 添加时间上下文
+        if start_time:
+            obs_text += f"\n录制开始时间: {start_time.isoformat()}"
+        
+        # 添加前序卡片上下文
+        if context_cards:
+            obs_text += "\n\n前序活动卡片：\n"
+            for card in context_cards[-3:]:  # 只取最近3个
+                obs_text += f"- {card.category}: {card.title}\n"
+        
+        if prompt:
+            obs_text += f"\n{prompt}"
+        
+        messages = [
+            {"role": "system", "content": GENERATE_CARDS_SYSTEM_PROMPT},
+            {"role": "user", "content": obs_text}
+        ]
+        
+        try:
+            response_text = await self._chat_completion(messages)
+            return self._parse_cards_from_text(response_text, start_time)
+        except Exception as e:
+            logger.error(f"卡片生成失败: {e}")
+            return []
+
+    async def generate_daily_report(
+        self,
+        cards: List[ActivityCard],
+        date_str: str
+    ) -> str:
+        """
+        根据活动卡片列表生成每日工作报告（Markdown 格式）
+
+        Args:
+            cards: 当日活动卡片列表
+            date_str: 日期字符串（如 "2026-05-15"）
+
+        Returns:
+            str: Markdown 格式的日报内容
+        """
+        if not cards:
+            return f"# 📋 工作日报 - {date_str}\n\n当日无活动记录数据。"
+
+        # 构建活动数据文本
+        data_text = f"日期：{date_str}\n\n活动记录（共 {len(cards)} 条）：\n"
+
+        total_minutes = 0
+        categories = {}
+        for i, card in enumerate(cards, 1):
+            start = card.start_time.strftime("%H:%M") if card.start_time else "??:??"
+            end = card.end_time.strftime("%H:%M") if card.end_time else "??:??"
+            dur = card.duration_minutes
+            total_minutes += dur
+
+            cat = card.category or "未分类"
+            categories[cat] = categories.get(cat, 0) + dur
+
+            apps = ", ".join(a.name for a in card.app_sites[:3]) if card.app_sites else ""
+            distractions = len(card.distractions)
+
+            data_text += (
+                f"\n{i}. [{start}-{end}] {cat} - {card.title}\n"
+                f"   摘要：{card.summary}\n"
+                f"   时长：{dur:.0f}分钟 | 生产力评分：{card.productivity_score:.0f}/100\n"
+            )
+            if apps:
+                data_text += f"   应用：{apps}\n"
+            if distractions > 0:
+                data_text += f"   分心次数：{distractions}\n"
+
+        # 添加统计摘要
+        data_text += f"\n总计记录时长：{total_minutes:.0f} 分钟\n"
+        data_text += "类别分布：\n"
+        for cat, mins in sorted(categories.items(), key=lambda x: -x[1]):
+            pct = mins / total_minutes * 100 if total_minutes > 0 else 0
+            data_text += f"  - {cat}: {mins:.0f}分钟 ({pct:.0f}%)\n"
+
+        messages = [
+            {"role": "system", "content": DAILY_REPORT_SYSTEM_PROMPT},
+            {"role": "user", "content": data_text}
+        ]
+
+        try:
+            return await self._chat_completion(messages, temperature=0.7)
+        except Exception as e:
+            logger.warning(f"AI 生成日报失败 ({e})，启用本地结构化生成模式")
+            return self._generate_local_daily_report(cards, date_str, total_minutes, categories)
+
+    def _generate_local_daily_report(
+        self,
+        cards: List[ActivityCard],
+        date_str: str,
+        total_minutes: float,
+        categories: dict
+    ) -> str:
+        """当外部大模型不可用（如 API Key 失效、网络异常）时的本地结构化日报生成"""
+        hours = total_minutes / 60.0
+        scores = [c.productivity_score for c in cards if c.productivity_score > 0]
+        avg_score = (sum(scores) / len(scores)) if scores else 85.0
+        deep_blocks = sum(1 for c in cards if c.duration_minutes >= 60)
+        
+        top_cats = sorted(categories.items(), key=lambda x: -x[1])
+        top_cat_names = "、".join(c[0] for c in top_cats[:2]) if top_cats else "日常事务"
+
+        lines = [
+            f"# 📋 工作日报 - {date_str}",
+            "",
+            "## 📊 今日概览",
+            f"今日总计记录活动 **{len(cards)} 项**，有效工作时长 **{hours:.1f} 小时**，生产力综合得分 **{avg_score:.0f} 分**。深度专注任务（≥60分钟）共 **{deep_blocks} 阶段**，核心精力集中在 **{top_cat_names}**。",
+            "",
+            "## ⏱️ 时间分配分析",
+            "| 类别 | 时长 | 占比 | 核心说明 |",
+            "|:---|:---|:---|:---|",
+        ]
+
+        for cat, mins in top_cats:
+            pct = (mins / total_minutes * 100) if total_minutes > 0 else 0
+            cat_cards = [c for c in cards if c.category == cat]
+            desc = "；".join(c.title for c in cat_cards[:2])
+            if len(cat_cards) > 2:
+                desc += f" 等共 {len(cat_cards)} 项"
+            h_part = int(mins // 60)
+            m_part = int(mins % 60)
+            dur_str = f"{h_part}h {m_part}m" if h_part > 0 else f"{m_part}m"
+            lines.append(f"| {cat} | {dur_str} | {pct:.0f}% | {desc} |")
+
+        lines.extend([
+            "",
+            "## ✅ 核心事项与产出",
+        ])
+
+        for i, card in enumerate(cards, 1):
+            start = card.start_time.strftime("%H:%M") if card.start_time else "--:--"
+            end = card.end_time.strftime("%H:%M") if card.end_time else "--:--"
+            lines.append(f"{i}. **{card.title}** ({start} - {end})")
+            if card.summary:
+                lines.append(f"   - 详情：{card.summary}")
+            if card.app_sites:
+                apps_str = "、".join(a.name for a in card.app_sites[:3])
+                lines.append(f"   - 涉及工具：{apps_str}")
+
+        morning_cards = [c for c in cards if c.start_time and c.start_time.hour < 12]
+        afternoon_cards = [c for c in cards if c.start_time and 12 <= c.start_time.hour < 18]
+        evening_cards = [c for c in cards if c.start_time and c.start_time.hour >= 18]
+
+        lines.extend([
+            "",
+            "## ⏰ 时间线回顾",
+        ])
+        if morning_cards:
+            titles = " ➔ ".join(c.title for c in morning_cards)
+            lines.append(f"- **上午**：{titles}")
+        if afternoon_cards:
+            titles = " ➔ ".join(c.title for c in afternoon_cards)
+            lines.append(f"- **下午**：{titles}")
+        if evening_cards:
+            titles = " ➔ ".join(c.title for c in evening_cards)
+            lines.append(f"- **晚间**：{titles}")
+
+        total_distractions = sum(len(c.distractions) for c in cards)
+        lines.extend([
+            "",
+            "## 📈 生产力与专注洞察",
+            f"- **生产力得分**：平均 **{avg_score:.0f} 分**，工作节奏连贯高效。",
+            f"- **分心打扰**：全天记录分心事件 **{total_distractions} 次**，整体受干扰程度较低。",
+            "",
+            "## 💡 总结与建议",
+            f"今日在「{top_cat_names}」任务上的推进扎实，建议后续持续保持当前的深度专注工作块划分节奏。",
+        ])
+
+        return "\n".join(lines)
+    
+    def _parse_observations_from_text(self, text: str, duration: float) -> List[Observation]:
+        """从文本响应中解析观察记录"""
+        observations = []
+        
+        try:
+            # 尝试提取 JSON
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                data = json.loads(json_match.group())
+                items = data.get("observations", [])
+                
+                for item in items:
+                    obs = Observation(
+                        start_ts=float(item.get("start_ts", 0)),
+                        end_ts=float(item.get("end_ts", duration)),
+                        text=item.get("text", ""),
+                        app_name=item.get("app_name"),
+                        window_title=item.get("window_title"),
+                        file_hint=item.get("file_hint")
+                    )
+                    observations.append(obs)
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON 解析失败: {e}, 原文: {text[:200]}")
+            # 如果 JSON 解析失败，创建一个基于整段文本的观察记录
+            observations.append(Observation(
+                start_ts=0,
+                end_ts=duration,
+                text=text[:500]
+            ))
+        
+        return observations
+    
+    def _parse_cards_from_text(self, text: str, start_time: Optional[datetime]) -> List[ActivityCard]:
+        """从文本响应中解析活动卡片"""
+        cards = []
+        
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                data = json.loads(json_match.group())
+                items = data.get("cards", [])
+                
+                for item in items:
+                    # 解析时间
+                    card_start = None
+                    card_end = None
+                    
+                    if item.get("start_time"):
+                        try:
+                            card_start = datetime.fromisoformat(item["start_time"].replace("Z", "+00:00"))
+                        except:
+                            card_start = start_time
+                    else:
+                        card_start = start_time
+                    
+                    if item.get("end_time"):
+                        try:
+                            card_end = datetime.fromisoformat(item["end_time"].replace("Z", "+00:00"))
+                        except:
+                            pass
+                    
+                    # 解析应用列表
+                    app_sites = []
+                    for app in item.get("app_sites", []):
+                        app_sites.append(AppSite(
+                            name=app.get("name", ""),
+                            duration_seconds=app.get("duration_seconds", 0)
+                        ))
+                    
+                    # 解析分心记录
+                    distractions = []
+                    for dist in item.get("distractions", []):
+                        distractions.append(Distraction(
+                            description=dist.get("description", ""),
+                            timestamp=dist.get("timestamp", 0),
+                            duration_seconds=dist.get("duration_seconds", 0)
+                        ))
+                    
+                    card = ActivityCard(
+                        category=item.get("category", "其他"),
+                        title=item.get("title", "未命名活动"),
+                        summary=item.get("summary", ""),
+                        start_time=card_start,
+                        end_time=card_end,
+                        app_sites=app_sites,
+                        distractions=distractions,
+                        productivity_score=float(item.get("productivity_score", 0))
+                    )
+                    cards.append(card)
+                    
+        except json.JSONDecodeError as e:
+            logger.warning(f"卡片 JSON 解析失败: {e}")
+        
+        return cards
+    
+    async def health_check(self) -> bool:
+        """检查 API 连接状态"""
+        try:
+            messages = [{"role": "user", "content": "hi"}]
+            await self._chat_completion(messages)
+            return True
+        except Exception as e:
+            logger.warning(f"API 健康检查失败: {e}")
+            return False
+    
+    async def test_connection(self) -> tuple[bool, str]:
+        """
+        测试 API 连接
+        
+        Returns:
+            tuple[bool, str]: (是否成功, 消息)
+        """
+        if not self.api_key and not self.is_ollama:
+            return False, "API Key 未配置（若使用本地 Ollama 可不填 Key）"
+        
+        try:
+            messages = [{"role": "user", "content": "你好，请回复'测试成功'"}]
+            response = await self._chat_completion(messages)
+            return True, f"连接成功！模型: {self.model}\n回复: {response[:100]}"
+        except httpx.HTTPStatusError as e:
+            return False, f"HTTP 错误 {e.response.status_code}: {e.response.text[:200]}"
+        except httpx.ConnectError:
+            return False, "连接失败：无法连接到服务器（若为本地模型请确认服务已启动）"
+        except httpx.TimeoutException:
+            return False, "连接超时"
+        except Exception as e:
+            return False, f"错误: {str(e)}"
+
+
+async def get_ollama_models(ollama_base_url: Optional[str] = None) -> List[str]:
+    """
+    获取本地 Ollama 已安装的模型列表
+    
+    Args:
+        ollama_base_url: Ollama 服务地址，默认读取 config.OLLAMA_BASE_URL
+        
+    Returns:
+        List[str]: 模型名称列表，如 ["qwen2.5-vl:7b", "minicpm-v:latest"]
+    """
+    base_url = (ollama_base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+        
+    tags_url = f"{base_url}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(tags_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+                return models
+    except Exception as e:
+        logger.debug(f"获取 Ollama 模型列表失败: {e}")
+    return []
+
+
+# 便捷函数：同步调用
+def transcribe_video_sync(video_path: str, duration: float, **kwargs) -> List[Observation]:
+    """同步版本的视频分析"""
+    loop = asyncio.new_event_loop()
+    provider = DayflowBackendProvider(**kwargs)
+    try:
+        return loop.run_until_complete(provider.transcribe_video(video_path, duration))
+    finally:
+        loop.run_until_complete(provider.close())
+        loop.close()
+
+
+def generate_cards_sync(
+    observations: List[Observation],
+    context_cards: Optional[List[ActivityCard]] = None,
+    **kwargs
+) -> List[ActivityCard]:
+    """同步版本的卡片生成"""
+    loop = asyncio.new_event_loop()
+    provider = DayflowBackendProvider(**kwargs)
+    try:
+        return loop.run_until_complete(provider.generate_activity_cards(observations, context_cards))
+    finally:
+        loop.run_until_complete(provider.close())
+        loop.close()
+
+
+def generate_daily_report_sync(
+    cards: List[ActivityCard],
+    date_str: str,
+    **kwargs
+) -> str:
+    """同步版本的日报生成"""
+    loop = asyncio.new_event_loop()
+    provider = DayflowBackendProvider(**kwargs)
+    try:
+        return loop.run_until_complete(provider.generate_daily_report(cards, date_str))
+    finally:
+        loop.run_until_complete(provider.close())
+        loop.close()

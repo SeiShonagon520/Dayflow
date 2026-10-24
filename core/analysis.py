@@ -34,12 +34,16 @@ class AnalysisScheduler:
         storage: Optional[StorageManager] = None,
         provider: Optional[DayflowBackendProvider] = None,
         batch_duration_minutes: int = None,
-        scan_interval_seconds: int = None
+        scan_interval_seconds: int = None,
+        progress_callback=None
     ):
         self.storage = storage or StorageManager()
         self.provider = provider or DayflowBackendProvider()
         self.batch_duration = batch_duration_minutes or config.BATCH_DURATION_MINUTES
         self.scan_interval = scan_interval_seconds or config.ANALYSIS_INTERVAL_SECONDS
+        
+        # 进度回调: (done, total) -> None，在调度线程里被调用
+        self.progress_callback = progress_callback
         
         self._running = False
         self._scheduler_thread: Optional[threading.Thread] = None
@@ -122,12 +126,16 @@ class AnalysisScheduler:
         
         if not pending_chunks:
             logger.debug("没有待分析的切片")
+            self._emit_progress(0, 0)
             return
         
         logger.info(f"发现 {len(pending_chunks)} 个待分析切片")
+        total_batches = len(self._create_batches(pending_chunks))
+        self._emit_progress(0, total_batches)
         
         # 将切片打包成批次
         batches = self._create_batches(pending_chunks)
+        done = 0
         
         for batch_chunks in batches:
             if self._stop_event.is_set():
@@ -137,6 +145,26 @@ class AnalysisScheduler:
                 await self._process_batch(batch_chunks)
             except Exception as e:
                 logger.error(f"处理批次失败: {e}")
+            finally:
+                done += 1
+                self._emit_progress(done, total_batches)
+        
+        self._emit_progress(total_batches, total_batches)
+    
+    def _emit_progress(self, done: int, total: int):
+        """
+        上报分析进度。
+
+        界面据此显示「正在分析 N/M」而不是干等 —— 用户需要知道
+        系统还在干活、还剩多少。没有真数据时宁可不给进度条。
+        """
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(done, total)
+        except Exception as e:
+            # 进度回调不该拖垮分析本身
+            logger.debug(f"进度回调异常: {e}")
     
     def _create_batches(self, chunks: List[VideoChunk]) -> List[List[VideoChunk]]:
         """将切片分组为批次"""
@@ -351,9 +379,13 @@ class AnalysisManager:
     整合调度器和手动触发功能
     """
     
-    def __init__(self, storage: Optional[StorageManager] = None):
+    def __init__(self, storage: Optional[StorageManager] = None,
+                 progress_callback=None):
         self.storage = storage or StorageManager()
-        self.scheduler = AnalysisScheduler(storage=self.storage)
+        self.scheduler = AnalysisScheduler(
+            storage=self.storage,
+            progress_callback=progress_callback
+        )
     
     def start_scheduler(self):
         """启动自动调度"""

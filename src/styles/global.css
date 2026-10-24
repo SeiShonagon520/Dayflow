@@ -1,0 +1,1217 @@
+/*
+ * 全局基础样式
+ *
+ * 这里只有「所有组件都要遵守」的规则：重置、排版基线、焦点可见性、
+ * 滚动条。任何只在某个组件里用的样式应该写进那个组件，不放这里。
+ *
+ * 所有值来自 tokens.css —— 这个文件里不出现任何硬编码色值。
+ */
+
+@import "./tokens.css";
+
+/* ── 重置 ──────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden; /* 桌面应用：滚动交给内部容器 */
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* 窄屏下所有表单元素提到 16px。
+   低于 16px 时 iOS Safari 聚焦会触发自动缩放，视口被推宽、
+   出现横向滚动，用户得再捏回来 —— 一次静默的布局崩坏。
+
+   桌面端保持 13–15px 的紧凑密度，只在手指操作的窄屏放宽。
+
+   .df-field 的字号必须写在样式表里：写成内联 style 的话，
+   这里的媒体查询永远赢不了（内联优先级最高），实测 375px
+   下设置页输入框仍是 13px。用 !important 压制是错的。
+
+   高度也从样式表给：伪元素扩展不了 <input>（点它命中的是
+   包装层，不是输入框本身），所以只能让控件本身够高。 */
+.df-field {
+  font-size: var(--text-sm);
+  height: 40px;
+}
+
+@media (max-width: 639px) {
+  .df-field,
+  .df-search {
+    font-size: 16px;
+  }
+}
+
+button {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ── 焦点可见性 ────────────────────────────────────────────
+   键盘用户必须能看到自己在哪。:focus-visible 而不是 :focus，
+   这样鼠标点击不会留下焦点环。 */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* 焦点环的 authored 过渡。
+   为什么不用 outline 过渡：元素自己的 transition 简写会整体
+   覆盖它 —— 实测 8 处内联 transition 全部让焦点环退回硬切。
+
+   为什么不用 ::focus-visible::after：Vite 的 CSS 压缩器会把
+   `::focus-visible::after` 压成 `::focus-visible:after`。
+   Chrome 碰巧认单冒号，但 CSS 规范里没有这个形式，
+   换个浏览器或者换个压缩器就静默失效 —— 实测就是 content:none。
+
+   所以用一个真实的 span：它在 JSX 里，不会被压缩器改写。 */
+.df-focus-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px var(--accent-ring);
+  opacity: 0;
+  transform: scale(0.97);
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out);
+}
+
+:focus-visible > .df-focus-ring,
+.df-focus-ring[data-on="true"] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* <input> / <select> 是替换元素，塞子节点不会渲染。
+   所以输入框的焦点环走 border + box-shadow 过渡 ——
+   不用伪元素，避免 ::focus-visible::after 被压缩器改写。 */
+.df-field {
+  transition: border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+
+.df-field:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* 伪元素要定位得住 */
+button,
+input,
+select,
+textarea,
+[role="radio"],
+[role="tab"] {
+  position: relative;
+}
+
+/* ── 排版基线 ──────────────────────────────────────────────
+   标题字重 600 而不是 700：700 在这个字号下会显得过重。 */
+h1,
+h2,
+h3,
+h4 {
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+h1 { font-size: var(--text-2xl); }
+h2 { font-size: var(--text-xl); }
+h3 { font-size: var(--text-lg); }
+h4 { font-size: var(--text-md); }
+
+/* ── 滚动条 ────────────────────────────────────────────────
+   细、低调，悬停才明显。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-placeholder);
+}
+
+/* ── 选中文本 ────────────────────────────────────────────── */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+/* ── 工具类 ────────────────────────────────────────────────
+   只放跨组件复用的。一次性样式请写在组件里。 */
+.u-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.u-line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.u-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.u-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 视觉隐藏但保留给读屏 */
+.u-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 动效关键帧 ────────────────────────────────────────────
+   只保留真正在用的几个。不要为了「有动画」而堆 keyframes。 */
+@keyframes df-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes df-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes df-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes df-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-4px); }
+  75%      { transform: translateX(4px); }
+}
+
+@keyframes df-page-in {
+  /* 页面切换：轻微上移 + 淡入，说明「内容换了」而不是「窗口闪了」。
+     位移刻意小 —— 四个页面是平级关系，大幅滑动会暗示它们有先后。 */
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes df-fade-out {
+  /* 退场：比入场短。元素直接消失用户会以为弄丢了什么，
+     尤其撤销条 —— 它刚说「已删除」然后凭空蒸发。 */
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+
+@keyframes df-overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes df-pop-in {
+  /* 弹层：缩放从 0.96 起步而不是 0。
+     从 0 开始读作「弹出」，弹层该读作「浮现」。 */
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes df-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* 页面容器：每次切换重放入场动效。
+   React 复用同一个 DOM 节点，必须用 key 强制重建，动画才会再跑一次。 */
+.df-page {
+  animation: df-page-in var(--dur-space) var(--ease-out);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 弹层：入场 + 遮罩淡入 */
+.df-overlay {
+  animation: df-fade-in var(--dur-menu) var(--ease-out);
+}
+
+.df-pop-in {
+  animation: df-pop-in var(--dur-menu) var(--ease-out);
+}
+
+/* 退场。挂在组件上的 class 触发，时长比入场短。 */
+.df-fade-out {
+  animation: df-fade-out var(--dur-exit) var(--ease-out) forwards;
+}
+
+.df-overlay-out {
+  animation: df-overlay-out var(--dur-exit) var(--ease-out) forwards;
+}
+
+/* 对话框：桌面 460px，窄屏收到视口内。
+   写成内联 width 的话媒体查询赢不了，320px 下对话框会
+   撑破视口 —— 固定宽度永远赢不了响应式。 */
+.df-dialog {
+  width: 460px;
+  max-width: calc(100vw - var(--space-8));
+}
+
+@media (max-width: 480px) {
+  .df-dialog {
+    padding: var(--space-4);
+  }
+}
+
+/* 空状态：比页面入场更轻。它是「没什么可看」的地方，
+   不该用和正常内容一样的分量去登场。 */
+.df-page-in-soft {
+  animation: df-fade-up var(--dur-reveal) var(--ease-out);
+}
+
+/* 加载骨架：静止的点阵呼吸，表示「在处理」而不是「在装饰」 */
+.df-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-sunken) 25%,
+    var(--bg-hover) 37%,
+    var(--bg-sunken) 63%
+  );
+  background-size: 400% 100%;
+  animation: df-skeleton-sweep 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes df-skeleton-sweep {
+  from { background-position: 100% 50%; }
+  to   { background-position: 0 50%; }
+}
+
+/* 撤销倒计时：6 秒内从满宽缩到 0。
+   用户不知道还剩多久，有条线才知道该不该现在按撤销。 */
+.df-undo-timer {
+  background: var(--accent);
+  transform-origin: left center;
+  animation: df-undo-timer var(--undo-window) linear forwards;
+}
+
+@keyframes df-undo-timer {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* 成功提示：短暂提亮一次，然后静止。
+   不做持续庆祝 —— 常规操作不配礼花。 */
+.df-success-flash {
+  animation: df-success-pop var(--dur-reveal) var(--ease-out);
+}
+
+/* ── 加载交接 ──────────────────────────────────────────────
+   骨架淡出 + 内容淡入，重叠 200ms。
+   实测修复前：骨架和内容同存 0 帧，加载完成是硬切。 */
+.df-skeleton-out {
+  animation: df-skeleton-out var(--dur-handoff) var(--ease-out) forwards;
+  position: absolute;
+  pointer-events: none;
+}
+
+.df-content-in {
+  animation: df-content-in var(--dur-handoff) var(--ease-out);
+}
+
+@keyframes df-skeleton-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes df-content-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes df-success-pop {
+  0%   { opacity: 0; transform: translateY(4px); }
+  60%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* 错误抖动：短促、克制。
+   规范说错误动效必须「有用且不抢戏」—— 它唯一的职责是把视线
+   引到旁边的错误文字上，信息本身由文字承担。 */
+.df-shake {
+  animation: df-shake var(--dur-tactile) var(--ease-in-out);
+}
+
+/* ── 应用外壳：三个宽度阶段 ──────────────────────────────────
+   断点来自实测，不是设备名：
+   200px 侧栏 + 560px 最小可读内容 = 760px 导航必须收起；
+   再窄内容顶到 560px 以下，导航改为底部标签栏。
+
+   断点值与 src/lib/useMediaQuery.ts 里的常量一致，
+   那边控制组件渲染，这边控制像素细节。 */
+.df-shell {
+  display: flex;
+  height: 100vh;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+
+/* 底部标签栏模式下改成纵向：内容在上，导航钉在底部 */
+.df-shell[data-layout="bottom"] {
+  flex-direction: column;
+}
+
+/* 完整侧栏是默认形态：200px 固定宽。
+   写成 data-layout 显式规则而不是依赖「没有 rail 规则」，
+   断点边界上才不会因为选择器顺序而闪一下。 */
+.df-shell[data-layout="full"] .df-sidebar {
+  width: 200px;
+}
+
+.df-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) var(--space-3);
+  gap: 2px;
+  /* width 是布局属性，动画期间每帧重排整棵子树。
+     实测：CPU 降速 4x、7 行列表时收起侧栏掉 1 帧
+     （中位 16.7ms，最大 33.4ms）。这在预算内 ——
+     300ms 一次性的布局开销换来「侧栏去哪了」这个可读信息。
+     降级方案（不动画宽度）是让侧栏瞬跳，但那样内容区会突然后移。 */
+  transition: width var(--dur-space) var(--ease-out),
+              padding var(--dur-space) var(--ease-out);
+}
+
+/* 图标栏：只留图标，文字进 aria-label + title */
+.df-shell[data-layout="rail"] .df-sidebar {
+  width: 56px;
+  padding: var(--space-4) 6px;
+  align-items: center;
+}
+
+/* 文字淡出而不是突然消失 —— 收起侧栏时能看清
+   「标签变成了图标」，而不是「内容丢了」。 */
+.df-nav-item > span:not([aria-hidden]) {
+  transition: opacity var(--dur-tactile) var(--ease-out);
+}
+
+.df-shell[data-layout="rail"] .df-nav-item > span:not([aria-hidden]) {
+  opacity: 0;
+}
+
+.df-brand-name {
+  transition: opacity var(--dur-tactile) var(--ease-out);
+}
+
+.df-shell[data-layout="rail"] .df-brand-name {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+
+.df-shell[data-layout="rail"] .df-brand,
+.df-shell[data-layout="rail"] .df-nav-item,
+.df-shell[data-layout="rail"] .df-rec-status {
+  justify-content: center;
+}
+
+/* 56px 放不下「停止录制」四个字 —— 实测被压成竖排，
+   一个字一行。图标栏里主操作收成图标 + tooltip。 */
+.df-shell[data-layout="rail"] .df-sidebar .df-btn {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.df-rail-glyph {
+  display: none;
+}
+
+.df-shell[data-layout="rail"] .df-sidebar .df-btn > *:not(.df-rail-glyph) {
+  display: none;
+}
+
+.df-shell[data-layout="rail"] .df-sidebar .df-rail-glyph {
+  display: inline;
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+.df-main {
+  flex: 1;
+  /* 关键：不加这一行，flex 子项的 min-width 默认是 auto，
+     内容过宽时会把 main 撑破而不是内部滚动。
+     旧版这行有了，统计页的越界元素是 165 个 —— 根因在
+     页面内部的固定宽度，不在 shell。 */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.df-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-5);
+}
+
+.df-brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+}
+
+.df-brand-name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-normal);
+  text-align: left;
+  cursor: pointer;
+  /* 焦点环的过渡列在这里也要写一遍 ——
+     组件自己的 transition 会整体覆盖 :focus-visible 那条，
+     只写 background/color 的话焦点环退回硬切。 */
+  transition: background var(--dur-base) var(--ease-out),
+              color var(--dur-base) var(--ease-out),
+              outline-color var(--dur-base) var(--ease-out),
+              outline-offset var(--dur-base) var(--ease-out);
+}
+
+.df-nav-item.is-active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+@media (hover: hover) {
+  .df-nav-item:hover:not(.is-active) {
+    background: var(--bg-sidebar-hover);
+  }
+}
+
+.df-nav-item[data-collapsed="true"] {
+  padding: 0;
+  justify-content: center;
+}
+
+.df-rec-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  background: transparent;
+}
+
+.df-rec-status[data-compact="true"] {
+  justify-content: center;
+  padding: var(--space-2) 0;
+}
+
+.df-rec-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── 手机：主操作 + 导航钉在底部拇指区 ──────────────────────
+   录制是最高频动作，不能要求用户伸到屏幕左上角。 */
+.df-phone-dock {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4)
+           calc(var(--space-3) + env(safe-area-inset-bottom));
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.df-bottom-nav {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+
+/* ── 命中区 ────────────────────────────────────────────────
+   实测 58 个可交互元素全部小于 40px：日期导航 28×28、
+   筛选药丸 70×28、导航项 175×34、切换主题 175×28。
+
+   两种手段，先用第一种：
+   1. 直接长高。侧栏、工具栏都有富余的竖向空间，
+      长高不改变视觉重量，命中区却真的变大了。
+   2. 伪元素扩展。只给「横向有紧邻控件」的那几个用 ——
+      日期导航两个按钮中心距只有 32px，各自扩到 40px 会撞上。
+      纵向扩展不碰横向邻居，是安全的。
+
+   绝不给 <input> 加伪元素：替换元素渲染不可靠。 */
+/* 命中区扩展量：目标 40px。-8px 对应 24px 高的控件
+   （24 + 8 + 8 = 40），对 28px 的刚好到 44。 */
+.df-hit-v::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  bottom: -8px;
+}
+
+/* 双向扩展：左右也没有紧邻控件时才用 */
+.df-hit::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: -11px;
+  bottom: -11px;
+}
+
+/* 开关：24px 高，扩 10px 刚好到 44，
+   和相邻 40px 高的输入框视觉上对得上。 */
+.df-hit-toggle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -10px;
+  bottom: -10px;
+}
+
+/* 这些容器的子元素要能定位伪元素 */
+.df-hit-host {
+  position: relative;
+}
+
+/* 导航项、录制、主题：直接长到 40px */
+.df-nav-item {
+  height: 40px;
+}
+
+.df-rec-status {
+  min-height: 32px;
+  justify-content: center;
+}
+
+/* 侧栏里的主操作和主题按钮：视觉长到 40px。
+   md 尺寸默认 34px，差 6px。侧栏竖向有富余空间，
+   长高不会让界面显得笨重。 */
+.df-sidebar > .df-btn {
+  height: 40px;
+  min-height: 40px;
+}
+
+.df-bottom-nav .df-nav-item {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  height: 48px;
+  padding: 0;
+  font-size: var(--text-2xs);
+  text-align: center;
+  /* 拇指区是触屏主场，命中区按触控尺寸给 */
+  min-height: 44px;
+}
+
+/* ── 悬停唯一性：触屏上没有 hover ────────────────────────────
+   功能不能只活在 hover 里。用能力查询而不是屏幕宽度判断 ——
+   窄窗口的桌面机同样没有 hover，触屏平板则可能很宽。 */
+.df-hover-only {
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.df-hover-only[data-revealed="true"],
+.df-hover-only:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .df-hover-only {
+    opacity: 1;
+  }
+}
+
+/* 键盘用户必须能看见自己落在哪 */
+@media (hover: none) {
+  .df-hover-only:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* ── 工具栏：宽屏一行，窄屏两行 ──────────────────────────────
+   日期导航、搜索、统计数字、日报按钮——四件事挤一行时，
+   320px 下搜索框右边界到 429px，直接跑出屏幕。 */
+.df-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.df-toolbar[data-stacked="false"] {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.df-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.df-toolbar-search {
+  min-width: 0;
+}
+
+.df-datenav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.df-datelabel {
+  min-width: 0;
+  text-align: center;
+  /* 日期标签不许把整行撑开：宁可收缩也不推挤邻居 */
+  flex-shrink: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-toolbar-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.df-toolbar-count {
+  white-space: nowrap;
+}
+
+.df-search {
+  min-width: 0;
+  /* 搜索框是手写的（左侧要留白给放大镜图标），没挂 .df-field。
+     所以字号、高度、边框、焦点环都得自己声明一份。
+     这些属性必须留在样式表：内联简写会赢过 :focus-visible
+     —— 实测内联 border 简写让聚焦时边框不变色。 */
+  font-size: var(--text-sm);
+  height: 34px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  transition: border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+
+.df-search:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* 页面标题不许被压成竖排。
+   320px 下标题 + 副标题 + 右侧按钮挤一行时，
+   「统计」两个字会各占一行 —— flex 子项默认 min-width:auto，
+   文字宁可换行也不肯让容器收缩。 */
+.df-page-title {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.df-page-subtitle {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-content-pad {
+  padding: var(--space-6);
+}
+
+@media (max-width: 639px) {
+  .df-content-pad {
+    padding: var(--space-4);
+  }
+}
+
+/* 分栏：宽屏左右并排，窄屏改成上下 ——
+   190px 的日期列表在 320px 下会把正文挤没 */
+.df-split-aside {
+  width: 190px;
+}
+
+.df-split[data-stacked="true"] {
+  flex-direction: column;
+}
+
+.df-split[data-stacked="true"] .df-split-aside {
+  width: 100%;
+  max-height: 34vh;
+  border-right: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* 手机：第一行日期 + 日报，第二行搜索占满 */
+.df-toolbar[data-stacked="true"] {
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
+}
+
+.df-toolbar[data-stacked="true"] .df-toolbar-row {
+  flex-wrap: wrap;
+}
+
+.df-toolbar[data-stacked="true"] .df-datelabel {
+  font-size: var(--text-sm);
+}
+
+/* ── 时间轴条目：宽屏三列，窄屏压缩时间列 ────────────────────
+   旧版给时间列固定 92px 且不可收缩，320px 下它和操作按钮
+   一起把主体挤到只剩 30px，标题一个字一行 —— 不是换行，
+   是没法读。窄屏下时间列让位，主体优先。 */
+.df-row-list {
+  --row-time-width: 92px;
+  --row-gap: var(--space-4);
+  --row-inset: var(--space-6);
+  position: relative;
+  padding: var(--space-4) var(--space-6) var(--space-10);
+}
+
+.df-row-list::before,
+.df-row-list::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--row-inset) + var(--row-time-width) + var(--row-gap) + 5px);
+  pointer-events: none;
+}
+
+.df-row-list::before {
+  top: 0;
+  bottom: var(--space-10);
+  width: 1px;
+  background: var(--timeline-track);
+}
+
+.df-row-list::after {
+  top: 0;
+  bottom: var(--space-10);
+  width: 2px;
+  opacity: 0.72;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    transparent 49.4%,
+    var(--accent-text) 50%,
+    transparent 50.6%,
+    transparent 100%
+  );
+  background-size: 100% 200%;
+  background-position: 0% 100%;
+  animation: df-timeline-flow 9s linear infinite;
+}
+
+@keyframes df-timeline-flow {
+  to { background-position: 0% 0%; }
+}
+
+.df-row {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  position: relative;
+  align-items: flex-start;
+}
+
+.df-row:not(:first-child) {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.df-row-time {
+  width: 92px;
+  flex-shrink: 0;
+  padding-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.df-row-node {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border: 2px solid var(--bg-canvas);
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.df-row-body {
+  flex: 1;
+  min-width: 0;
+  /* 主体是这一行的主角，不能被邻居挤成一条 */
+  overflow-wrap: anywhere;
+}
+
+.df-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* 宽屏给文字，窄屏给图标。
+   文字按钮「编辑」「删除」在 320px 下会吃掉 92px，
+   正好是活动标题的全部可用宽度。 */
+.df-actions-icon {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .df-actions-label {
+    display: none;
+  }
+
+  .df-actions-icon {
+    display: inline;
+  }
+
+  /* 窄屏下操作常驻可见 —— 它们是唯一能改数据的入口 */
+  .df-row-actions {
+    opacity: 1;
+  }
+}
+
+/* 应用排行：名称列给固定 140px 会吃掉 320px 屏幕的将近一半，
+   而条形图才是这行的主角。名称改成弹性列 + 省略号。 */
+.df-rank-name {
+  flex: 1;
+  min-width: 0;
+  max-width: 180px;
+}
+
+@media (max-width: 480px) {
+  .df-rank-name {
+    max-width: 100px;
+  }
+}
+
+/* 双栏图表：宽屏并排，窄屏堆叠。
+   minmax(0, ...) 只保证不溢出，不会换行 ——
+   320px 下两个图表各拿一半，环图和折线都被压得读不出来。
+
+   轨道定义在样式表而不是内联：媒体查询赢不了内联 style，
+   用 !important 压制只是把问题藏起来。 */
+.df-chart-grid-a {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+}
+
+.df-chart-grid-b {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 860px) {
+  .df-chart-grid-a,
+  .df-chart-grid-b {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 窄屏：时间列缩到 56px，够放 "09:00"，
+   时长另起一行显示。垂直对齐比宽度优先。 */
+@media (max-width: 480px) {
+  .df-row-list {
+    --row-time-width: 52px;
+    --row-gap: var(--space-3);
+    --row-inset: var(--space-4);
+    padding: var(--space-4) var(--space-4) var(--space-10);
+  }
+
+  .df-row {
+    gap: var(--space-3);
+  }
+
+  .df-row-time {
+    width: 52px;
+  }
+}
+
+[data-motion="reduced"] .df-row-list::after {
+  display: none;
+}
+
+.u-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+
+/* ── 按钮交互态 ────────────────────────────────────────────
+   悬停和按下走 CSS class，不写在组件的 style 里。
+   内联 style 优先级高于样式表，会把 :hover 和 :active 全部盖掉 ——
+   实测按下按钮时 transform 恒为 none，就是因为这个。
+
+   :active 只在真正按住的瞬间存在，键盘触发时不生效。
+   所以另加 :focus-visible 的轻微缩放，键盘用户也有同等反馈。 */
+.df-btn {
+  transition: background var(--dur-tactile) var(--ease-out),
+              border-color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out),
+              /* 焦点环也要过渡。组件的 transition 简写会整体
+                 覆盖 :focus-visible 那条，漏掉就退回硬切。 */
+              outline-color var(--dur-base) var(--ease-out),
+              outline-offset var(--dur-base) var(--ease-out);
+  will-change: transform;
+}
+
+@media (hover: hover) {
+  .df-btn[data-variant="primary"]:hover:not(.is-disabled) {
+    background: var(--accent-hover);
+  }
+  .df-btn[data-variant="secondary"]:hover:not(.is-disabled) {
+    background: var(--bg-hover);
+  }
+  .df-btn[data-variant="ghost"]:hover:not(.is-disabled) {
+    background: var(--bg-hover);
+  }
+  .df-btn[data-variant="danger"]:hover:not(.is-disabled) {
+    background: var(--danger-hover);
+  }
+}
+
+.df-btn:active:not(.is-disabled) {
+  transform: scale(0.97);
+}
+
+.df-btn:focus-visible:active:not(.is-disabled) {
+  transform: scale(0.97);
+}
+
+.df-btn.is-disabled {
+  cursor: not-allowed;
+}
+
+/* ── 减少动效 ──────────────────────────────────────────────
+   用户开了系统「减少动态效果」时，砍掉所有位移和缩放，
+   保留必要的状态变化（hover 变色、焦点环不受影响）。
+
+   用 0.01ms 而不是 none —— none 会让 transitionend / animationend
+   完全不触发，依赖这些事件的代码会永久挂起。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .df-row-list::after {
+    display: none;
+  }
+
+  .df-btn:active:not(.is-disabled),
+  .df-btn:focus-visible:active:not(.is-disabled) {
+    transform: none;
+  }
+
+  /* 加载指示器例外：规范把它列在「保留」清单里。
+     转圈承载的是「正在处理」这个信息，停掉就变成一个静止的圆点，
+     用户不知道系统在忙还是在卡死。保留旋转，只降速。 */
+  .df-spin,
+  [style*="df-spin"] {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  /* 撤销倒计时同理：它不是装饰，是「还剩多久」。
+     被砍成 0.01ms 之后条子瞬间缩到 0（实测 scaleX=0），
+     用户看到的是一条满格然后突然没了 —— 比没有更糟。
+     改成均匀步进：不做插值动画，但形状仍然随时间变化。 */
+  .df-undo-timer {
+    animation: df-undo-timer-steps var(--undo-window) steps(24) forwards
+      !important;
+  }
+}
+
+/* 步进版倒计时：每秒跳一格，不做平滑插值。
+   没有移动感（前庭刺激为零），但「还剩多久」读得出来。 */
+@keyframes df-undo-timer-steps {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* ── 界面内的动效强度开关 ────────────────────────────────────
+   系统偏好只是兜底。用户在界面里选了「减少」或「完整」后，
+   同样通过 data-motion 属性降级 —— 不需要 JS 逐个改内联样式。 */
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+[data-motion="reduced"] .df-btn:active,
+[data-motion="reduced"] .df-btn:focus-visible:active {
+  transform: none;
+}
+
+[data-motion="reduced"] .df-btn {
+  /* 焦点环的过渡保留 —— 它是状态指示，不是装饰。
+     减的是位移和缩放，不是「你落在哪」。 */
+  transition: background var(--dur-tactile) linear,
+              border-color var(--dur-tactile) linear,
+              outline-color var(--dur-tactile) linear,
+              outline-offset var(--dur-tactile) linear;
+}
+
+[data-motion="reduced"] .df-spin,
+[data-motion="reduced"] [style*="df-spin"] {
+  animation-duration: 1.6s !important;
+  animation-iteration-count: infinite !important;
+}
+
+/* 选了「完整」时，即使系统要求减少也照常播放。
+   这是用户的显式选择，优先级高于系统默认。 */
+[data-motion="full"] .df-btn:active,
+[data-motion="full"] .df-btn:focus-visible:active {
+  transform: scale(0.97);
+  transition: background var(--dur-tactile) var(--ease-out),
+              border-color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}

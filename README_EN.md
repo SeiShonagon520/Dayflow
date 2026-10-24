@@ -5,7 +5,8 @@
 **AI-powered time tracking and productivity analysis for Windows**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
-[![PySide6](https://img.shields.io/badge/GUI-PySide6-green?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
+[![GUI](https://img.shields.io/badge/GUI-Tauri_2.0_%7C_React_18-61DAFB?logo=react&logoColor=white)](https://tauri.app/)
+[![Core](https://img.shields.io/badge/Core-Rust_%7C_Python-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
@@ -96,7 +97,15 @@ Dayflow is designed around **local recording + cloud analysis + local storage**.
 
 ### 🆕 Recent highlights
 
-#### v1.5.2 (2026-03)
+#### v1.6.0 (2026-10)
+
+- **Major Architectural Overhaul**: Completely migrated from desktop Qt to **Tauri 2.0 (Rust) + React 18 + Vite**, delivering instant startup, fluid animations, and significantly lighter resource footprint.
+- **Modern Responsive UI**: Three-pane responsive layout, rich activity timeline cards, smooth interactive charts, and system dark theme support.
+- **Kernel-level Process Management (Windows Job Object)**: Embedded Python bridge process tree is bound to Windows Job Object, eliminating console windows and orphan processes.
+- **Offline Resilient Report Generation**: When external AI APIs time out or fail (e.g. invalid/expired key), automatic local aggregation synthesizes a structured Markdown daily report in milliseconds.
+- **Interactive Statistics Dashboard**: 7-day and 30-day metrics, productivity trend chart, category donut breakdown, daily activity heatmap, and hourly distribution graph.
+- **Multi-Monitor & Idle Pause**: Panoramic multi-screen capture and automatic pause/resume based on keyboard and mouse idle detection.
+- **Privacy Filtering**: Window title & process blacklist filtering, plus storage quota limits with automatic cleanup.
 
 - Statistics page redesign with metric cards, donut chart, trend chart, heatmap, and week comparison
 - Activity cards can now be edited or deleted

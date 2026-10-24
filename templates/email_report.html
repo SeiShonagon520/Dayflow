@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dayflow 深度分析报告 - {{ date_str }}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F3F4F6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;">
+    <div style="max-width: 640px; margin: 0 auto; padding: 20px;">
+        <!-- 头部 -->
+        <div style="background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); border-radius: 16px 16px 0 0; padding: 24px; text-align: center;">
+            <h1 style="margin: 0; color: white; font-size: 22px; font-weight: 600;">📊 Dayflow 深度分析报告</h1>
+            <p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">{{ date_str }}</p>
+            <div style="margin-top: 12px; display: inline-block; background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px;">
+                <span style="color: white; font-size: 13px;">{{ day_type.type | default('常规日') }}</span>
+            </div>
+        </div>
+        
+        <!-- 主体 -->
+        <div style="background-color: white; padding: 24px; border-radius: 0 0 16px 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+            
+            <!-- 总览卡片 -->
+            <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                <div style="flex: 1; background-color: #F0F9FF; border-radius: 10px; padding: 14px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: 700; color: #0369A1;">{{ hours }}h {{ mins }}m</div>
+                    <div style="color: #6B7280; font-size: 12px; margin-top: 2px;">记录时长</div>
+                </div>
+                <div style="flex: 1; background-color: #F0FDF4; border-radius: 10px; padding: 14px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: 700; color: {{ score_color }};">{{ score_emoji }} {{ score }}</div>
+                    <div style="color: #6B7280; font-size: 12px; margin-top: 2px;">{{ score_text }}</div>
+                </div>
+                <div style="flex: 1; background-color: #FEF3C7; border-radius: 10px; padding: 14px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: 700; color: #D97706;">{{ focus.deep_count | default(0) }}</div>
+                    <div style="color: #6B7280; font-size: 12px; margin-top: 2px;">深度工作</div>
+                </div>
+            </div>
+            
+            <!-- 时间分布 -->
+            <div style="margin-bottom: 20px;">
+                <h2 style="font-size: 15px; font-weight: 600; color: #111827; margin: 0 0 12px 0;">
+                    📈 时间分布
+                </h2>
+                {% if stats_items %}
+                    {% for item in stats_items %}
+                    <div style="margin-bottom: 10px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                            <span style="font-weight: 500; color: #374151; font-size: 13px;">{{ item.category }}</span>
+                            <span style="color: #6B7280; font-size: 12px;">{{ item.hours }}h {{ item.mins }}m ({{ item.percent | round(0) | int }}%)</span>
+                        </div>
+                        <div style="background-color: #E5E7EB; border-radius: 4px; height: 6px; overflow: hidden;">
+                            <div style="background-color: {{ item.color }}; width: {{ item.bar_width }}%; height: 100%;"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div style="color: #9CA3AF; text-align: center; padding: 20px;">暂无数据</div>
+                {% endif %}
+            </div>
+            
+            <!-- 分隔线 -->
+            <div style="border-top: 1px solid #E5E7EB; margin: 20px 0;"></div>
+            
+            <!-- 深度分析 -->
+            <div style="margin-bottom: 20px;">
+                <h2 style="font-size: 15px; font-weight: 600; color: #111827; margin: 0 0 16px 0;">
+                    🔍 深度分析
+                </h2>
+                {{ deep_html | safe }}
+            </div>
+            
+            <!-- 分隔线 -->
+            <div style="border-top: 1px solid #E5E7EB; margin: 20px 0;"></div>
+            
+            <!-- AI 点评 -->
+            <div style="background: linear-gradient(135deg, #EDE9FE 0%, #DDD6FE 100%); border-radius: 12px; padding: 16px;">
+                <h2 style="font-size: 15px; font-weight: 600; color: #5B21B6; margin: 0 0 10px 0;">
+                    💬 今日洞察
+                </h2>
+                <p style="margin: 0; color: #4C1D95; font-size: 14px; line-height: 1.8;">
+                    {{ ai_comment }}
+                </p>
+            </div>
+            
+            {% if expert_analysis_html %}
+                {{ expert_analysis_html | safe }}
+            {% endif %}
+        </div>
+        
+        <!-- 页脚 -->
+        <div style="text-align: center; padding: 16px; color: #9CA3AF; font-size: 11px;">
+            由 Dayflow 自动生成 · {{ generated_at }}
+        </div>
+    </div>
+</body>
+</html>

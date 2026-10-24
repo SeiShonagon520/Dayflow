@@ -19,9 +19,13 @@ def is_frozen() -> bool:
 
 
 def get_exe_path() -> str:
-    """获取当前可执行文件的完整路径"""
+    """获取当前可执行文件的完整路径（优先返回主程序 dayflow.exe）"""
     if is_frozen():
-        return sys.executable
+        exe = Path(sys.executable)
+        dayflow = exe.parent / "dayflow.exe"
+        if dayflow.is_file():
+            return str(dayflow)
+        return str(exe)
     else:
         # 开发模式下返回 python 解释器路径（不应用于自启动）
         return sys.executable

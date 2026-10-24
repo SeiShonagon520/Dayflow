@@ -17,6 +17,7 @@ import cv2
 import config
 from core.types import VideoChunk, ChunkStatus
 from core.window_tracker import get_tracker, WindowInfo
+from core.privacy_filter import PrivacyFilter
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,9 @@ class ScreenRecorder:
         self._current_chunk_start: Optional[datetime] = None
         self._frame_count = 0
         
-        # 窗口追踪
+        # 窗口追踪与隐私过滤
         self._window_tracker = get_tracker()
+        self._privacy_filter = PrivacyFilter()
         self._current_window_records: List[Dict] = []  # 当前切片的窗口记录
         
         # 确保输出目录存在
@@ -305,6 +307,15 @@ class ScreenRecorder:
                 frame_capture_time = datetime.now()
                 window_info = self._window_tracker.get_active_window()
                 
+                # 隐私敏感检测与画面脱敏
+                is_sensitive = self._privacy_filter.is_sensitive(window_info)
+                if is_sensitive:
+                    if self._privacy_filter.action == "pause":
+                        # 隐私模式设为 pause 时，跳过敏感画面的录制
+                        last_frame_time = current_time
+                        continue
+                    frame = self._privacy_filter.mask_frame(frame)
+                
                 # 检查是否需要创建新切片
                 if self._should_create_new_chunk():
                     self._finalize_current_chunk()
@@ -322,11 +333,13 @@ class ScreenRecorder:
                     
                     if window_changed:
                         elapsed = (frame_capture_time - self._current_chunk_start).total_seconds()
+                        safe_title = self._privacy_filter.sanitize_window_title(window_info)
                         self._current_window_records.append({
                             "timestamp": elapsed,
                             "app_name": self._window_tracker.get_friendly_app_name(window_info),
-                            "window_title": window_info.window_title,
-                            "process_name": window_info.app_name
+                            "window_title": safe_title,
+                            "process_name": window_info.app_name,
+                            "is_sensitive": is_sensitive
                         })
                         last_window_info = window_info
                 

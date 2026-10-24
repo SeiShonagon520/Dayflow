@@ -6,44 +6,32 @@ from typing import List, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QFrame, QSizePolicy, QProgressBar, QGraphicsDropShadowEffect,
+    QFrame, QSizePolicy, QProgressBar,
     QPushButton, QFileDialog, QLineEdit, QDialog, QComboBox,
     QSpinBox, QMenu, QMessageBox, QTextEdit
 )
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
-from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QPainter, QBrush, QAction
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPointF, QRectF
+from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QPainter, QBrush, QPen, QAction
 
 from core.types import ActivityCard
-from ui.themes import get_theme_manager, get_theme, get_efficiency_color
+from ui.components.scale_feedback import FeedbackButton
+from ui.components.motion_dialog import MotionDialog
+from ui.components.snackbar import Snackbar
+from ui.motion import (
+    rise_in, collapse_out, collapse_height, expand_height, flash,
+    stagger_delays, animate_property,
+)
+from ui.themes import (
+    get_theme_manager,
+    get_theme,
+    get_efficiency_color,
+    get_category_color,
+    with_alpha,
+    RADIUS,
+)
 
 
-# 类别颜色映射
-CATEGORY_COLORS = {
-    "工作": "#4F46E5",      # Indigo
-    "Work": "#4F46E5",
-    "学习": "#0EA5E9",      # Sky Blue
-    "Study": "#0EA5E9",
-    "编程": "#10B981",      # Emerald
-    "Coding": "#10B981",
-    "会议": "#F59E0B",      # Amber
-    "Meeting": "#F59E0B",
-    "娱乐": "#EC4899",      # Pink
-    "Entertainment": "#EC4899",
-    "社交": "#8B5CF6",      # Violet
-    "Social": "#8B5CF6",
-    "休息": "#6B7280",      # Gray
-    "Break": "#6B7280",
-    "其他": "#78716C",      # Stone
-    "Other": "#78716C",
-}
-
-
-def get_category_color(category: str) -> str:
-    """获取类别对应的颜色"""
-    return CATEGORY_COLORS.get(category, "#78716C")
-
-
-class CardEditDialog(QDialog):
+class CardEditDialog(MotionDialog):
     """卡片编辑对话框"""
     
     card_updated = Signal(object)  # 发送更新后的卡片
@@ -348,10 +336,13 @@ class StatsSummaryWidget(QFrame):
         title_layout.addWidget(self.total_label)
         title_layout.addStretch()
         
-        # 折叠按钮
-        self.collapse_btn = QPushButton("▼")
-        self.collapse_btn.setFixedSize(28, 28)
+        # 折叠按钮：28px 的可见尺寸对鼠标偏小，直接做成 40px 命中区。
+        # 这个控件周围没有密集邻接，放大不会造成误点。
+        self.collapse_btn = FeedbackButton("▼")
+        self.collapse_btn.setFixedSize(40, 40)
         self.collapse_btn.setCursor(Qt.PointingHandCursor)
+        self.collapse_btn.setAccessibleName("折叠活动明细")
+        self.collapse_btn.setToolTip("折叠")
         self.collapse_btn.clicked.connect(self._toggle_collapse)
         title_layout.addWidget(self.collapse_btn)
         
@@ -365,13 +356,24 @@ class StatsSummaryWidget(QFrame):
         layout.addWidget(self.chart_widget)
     
     def _toggle_collapse(self):
-        """切换折叠状态"""
+        """
+        切换折叠状态。
+
+        这里需要动效：空间在变大变小，眼睛得跟着走。
+        瞬变会让用户丢失「刚才那块东西去哪了」。
+        """
         self._collapsed = not self._collapsed
-        self.chart_widget.setVisible(not self._collapsed)
         self.collapse_btn.setText("▶" if self._collapsed else "▼")
         
-        # 更新按钮提示
-        self.collapse_btn.setToolTip("展开" if self._collapsed else "折叠")
+        # 提示与可访问名称都要跟着翻转：图标变了，说法也得变
+        label = "展开活动明细" if self._collapsed else "折叠活动明细"
+        self.collapse_btn.setToolTip(label)
+        self.collapse_btn.setAccessibleName(label)
+        
+        if self._collapsed:
+            collapse_height(self.chart_widget)
+        else:
+            expand_height(self.chart_widget)
     
     def apply_theme(self):
         """应用主题"""
@@ -530,6 +532,276 @@ class StatsSummaryWidget(QFrame):
         self.chart_container.addWidget(row)
 
 
+class TimelineSpineWidget(QWidget):
+    """时间轴左侧刻度与轨道连线组件"""
+    
+    def __init__(self, card: ActivityCard, parent=None):
+        super().__init__(parent)
+        self.card = card
+        self.setFixedWidth(72)
+        get_theme_manager().theme_changed.connect(self.update)
+    
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        t = get_theme()
+        
+        rail_x = 58.0
+        h = float(self.height())
+        node_y = 26.0
+        
+        # 1. 垂直轨道导线
+        rail_pen = QPen(QColor(t.border), 2)
+        painter.setPen(rail_pen)
+        painter.drawLine(QPointF(rail_x, 0), QPointF(rail_x, h))
+        
+        # 2. 节点与卡片连接分支线
+        branch_pen = QPen(QColor(t.border), 1.5)
+        painter.setPen(branch_pen)
+        painter.drawLine(QPointF(rail_x, node_y), QPointF(float(self.width()), node_y))
+        
+        # 3. 节点圆点 (类别对应颜色)
+        cat_color = QColor(get_category_color(self.card.category))
+        
+        # 深度工作 (duration >= 60m) 外环光晕
+        if self.card.duration_minutes >= 60:
+            halo_pen = QPen(QColor("#FF6B6B"), 2)
+            painter.setPen(halo_pen)
+            painter.setBrush(QBrush(QColor(t.bg_primary)))
+            painter.drawEllipse(QPointF(rail_x, node_y), 8.5, 8.5)
+            
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(cat_color))
+            painter.drawEllipse(QPointF(rail_x, node_y), 4.5, 4.5)
+        else:
+            painter.setPen(QPen(QColor(t.bg_primary), 2))
+            painter.setBrush(QBrush(cat_color))
+            painter.drawEllipse(QPointF(rail_x, node_y), 5.5, 5.5)
+            
+        # 4. 时间与时长文字
+        if self.card.start_time:
+            time_str = self.card.start_time.strftime("%H:%M")
+            dur = self.card.duration_minutes
+            if dur >= 60:
+                h_dur = int(dur // 60)
+                m_dur = int(dur % 60)
+                dur_str = f"{h_dur}h{m_dur}m" if m_dur else f"{h_dur}h"
+            else:
+                dur_str = f"{int(dur)}m"
+                
+            # 时间：等宽加粗
+            painter.setFont(QFont("Cascadia Code", 10, QFont.Bold))
+            painter.setPen(QColor(t.text_primary))
+            painter.drawText(QRectF(0, node_y - 18, rail_x - 12, 18), Qt.AlignRight | Qt.AlignVCenter, time_str)
+            
+            # 时长：弱化小字
+            painter.setFont(QFont("Segoe UI Variable Text", 9))
+            painter.setPen(QColor(t.text_muted))
+            painter.drawText(QRectF(0, node_y + 2, rail_x - 12, 16), Qt.AlignRight | Qt.AlignVCenter, dur_str)
+
+
+class TimelineGapSpineWidget(QWidget):
+    """时间轴空闲时段左侧虚线轨道"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(72)
+        get_theme_manager().theme_changed.connect(self.update)
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        t = get_theme()
+        
+        rail_pen = QPen(QColor(t.border), 1.5, Qt.DashLine)
+        painter.setPen(rail_pen)
+        painter.drawLine(QPointF(58.0, 0), QPointF(58.0, float(self.height())))
+
+
+class TimelineGapWidget(QWidget):
+    """时间轴空闲 / 离开时段胶囊组件"""
+    
+    def __init__(self, start_time: datetime, end_time: datetime, gap_minutes: float, parent=None):
+        super().__init__(parent)
+        self.start_time = start_time
+        self.end_time = end_time
+        self.gap_minutes = gap_minutes
+        self.setFixedHeight(36)
+        self._setup_ui()
+        self.apply_theme()
+        get_theme_manager().theme_changed.connect(self.apply_theme)
+        
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        
+        # 左侧虚线轨道
+        self.spine = TimelineGapSpineWidget()
+        layout.addWidget(self.spine)
+        
+        # 右侧胶囊卡片
+        h = int(self.gap_minutes // 60)
+        m = int(self.gap_minutes % 60)
+        dur_str = f"{h}小时 {m}分钟" if h > 0 else f"{m}分钟"
+        range_str = f"{self.start_time.strftime('%H:%M')} - {self.end_time.strftime('%H:%M')}"
+        
+        self.pill = QLabel(f"⏸️ 空闲 / 暂离 {dur_str}  ·  {range_str}")
+        self.pill.setObjectName("gapPill")
+        layout.addWidget(self.pill)
+        layout.addStretch()
+        
+    def apply_theme(self):
+        t = get_theme()
+        is_dark = (t.name == "dark")
+        bg = "rgba(255, 255, 255, 0.03)" if is_dark else "rgba(15, 23, 42, 0.03)"
+        self.pill.setStyleSheet(f"""
+            QLabel#gapPill {{
+                background-color: {bg};
+                border: 1px dashed {t.border};
+                border-radius: 12px;
+                color: {t.text_muted};
+                font-size: 12px;
+                padding: 4px 14px;
+                font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+            }}
+        """)
+
+
+class CategoryFilterBar(QWidget):
+    """分类筛选胶囊栏组件"""
+    
+    category_selected = Signal(str)  # 选中的类别名称，"" 表示全部
+    
+    CATEGORY_ICONS = {
+        "全部": "✨",
+        "工作": "📝",
+        "学习": "📚",
+        "编程": "💻",
+        "会议": "👥",
+        "娱乐": "🎮",
+        "社交": "💬",
+        "休息": "☕",
+        "其他": "📦",
+    }
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._counts = {}
+        self._current_category = ""
+        self._buttons = {}
+        self._setup_ui()
+        self.apply_theme()
+        get_theme_manager().theme_changed.connect(self.apply_theme)
+        
+    def _setup_ui(self):
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(24, 0, 24, 8)
+        self.layout.setSpacing(8)
+        self._rebuild_buttons()
+        
+    def _rebuild_buttons(self):
+        while self.layout.count():
+            item = self.layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._buttons.clear()
+        
+        categories = ["全部"]
+        standard_cats = ["工作", "编程", "学习", "会议", "娱乐", "休息"]
+        for cat in standard_cats:
+            if cat not in categories:
+                categories.append(cat)
+        for cat in self._counts.keys():
+            if cat and cat not in categories:
+                categories.append(cat)
+                
+        for cat in categories:
+            count = self._counts.get(cat, 0)
+            if cat == "全部":
+                count = sum(self._counts.values())
+            icon = self.CATEGORY_ICONS.get(cat, "🏷️")
+            label = f"{icon} {cat} ({count})" if count > 0 else f"{icon} {cat}"
+            btn = FeedbackButton(label)
+            btn.setCheckable(True)
+            target = "" if cat == "全部" else cat
+            btn.setChecked(self._current_category == target)
+            btn.setCursor(Qt.PointingHandCursor)
+            # 40px 命中区：药丸是高频点击目标，32px 在触控板上容易点偏
+            btn.setFixedHeight(40)
+            # 药丸只靠颜色表示选中，读屏用户无从判断；名称里带上数量和状态
+            count_txt = f"，{count} 项" if count else "，暂无记录"
+            btn.setAccessibleName(f"筛选 {cat}{count_txt}")
+            btn.clicked.connect(lambda checked=False, c=cat: self._on_btn_clicked(c))
+            self.layout.addWidget(btn)
+            self._buttons[cat] = btn
+            
+        self.layout.addStretch()
+        self.apply_theme()
+        
+    def _on_btn_clicked(self, category: str):
+        target = "" if category == "全部" else category
+        self._current_category = target
+        for cat, btn in self._buttons.items():
+            btn.setChecked(cat == category)
+        self.category_selected.emit(target)
+        self.apply_theme()
+        
+    def update_counts(self, cards: List[ActivityCard]):
+        counts = {}
+        for c in cards:
+            cat = c.category or "其他"
+            counts[cat] = counts.get(cat, 0) + 1
+        self._counts = counts
+        self._rebuild_buttons()
+        
+    def apply_theme(self):
+        t = get_theme()
+        for cat, btn in self._buttons.items():
+            is_active = (self._current_category == ("" if cat == "全部" else cat))
+            if is_active:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {t.accent};
+                        color: #FFFFFF;
+                        border: 1px solid {t.accent};
+                        border-radius: 9999px;
+                        padding: 4px 14px;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {t.accent_hover};
+                    }}
+                    QPushButton:focus {{
+                        border: 2px solid {t.accent_focus};
+                        padding: 3px 13px;
+                    }}
+                """)
+            else:
+                # 未选中：Apple 幽灵药丸 —— 白底 + 发丝线，不抢注意力
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {t.pill_bg};
+                        color: {t.text_secondary};
+                        border: 1px solid {t.border};
+                        border-radius: 9999px;
+                        padding: 4px 14px;
+                        font-size: 12px;
+                        font-weight: 500;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {t.bg_hover};
+                        color: {t.text_primary};
+                        border-color: {t.border_hover};
+                    }}
+                    QPushButton:focus {{
+                        border: 2px solid {t.accent_focus};
+                        padding: 3px 13px;
+                    }}
+                """)
+
+
 class ActivityCardWidget(QFrame):
     """单个活动卡片组件"""
     
@@ -543,6 +815,21 @@ class ActivityCardWidget(QFrame):
         self._setup_ui()
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        # 键盘可达：卡片是活动记录的编辑/删除入口，必须能 Tab 到
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName(self._accessible_name())
+    
+    def _accessible_name(self) -> str:
+        """为屏幕阅读器描述这张卡片（类别 / 标题 / 时段）"""
+        parts = [self.card.category or "活动"]
+        if self.card.title:
+            parts.append(self.card.title)
+        time_range = self._format_time_range()
+        if time_range:
+            parts.append(time_range)
+        if self.card.productivity_score > 0:
+            parts.append(f"生产力 {int(self.card.productivity_score)}%")
+        return "，".join(parts)
     
     def _setup_ui(self):
         t = get_theme()
@@ -568,10 +855,10 @@ class ActivityCardWidget(QFrame):
         category_color = get_category_color(self.card.category)
         category_label.setStyleSheet(f"""
             QLabel#categoryLabel {{
-                background-color: {category_color}18;
+                background-color: {with_alpha(category_color, 0.12)};
                 color: {category_color};
                 padding: 5px 12px;
-                border-radius: 6px;
+                border-radius: 8px;
                 font-size: 12px;
                 font-weight: 600;
             }}
@@ -579,13 +866,14 @@ class ActivityCardWidget(QFrame):
         top_layout.addWidget(category_label)
         
         # 深度工作徽章 (duration >= 60 分钟)
+        # Apple 规范不使用装饰性渐变，改用单一强调色的实心药丸
         if self.card.duration_minutes >= 60:
             deep_work_badge = QLabel("🔥 深度工作")
             deep_work_badge.setStyleSheet(f"""
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF6B6B, stop:1 #FF8E53);
-                color: white;
+                background-color: {t.accent};
+                color: #FFFFFF;
                 padding: 4px 10px;
-                border-radius: 10px;
+                border-radius: 9999px;
                 font-size: 11px;
                 font-weight: 600;
             """)
@@ -670,27 +958,32 @@ class ActivityCardWidget(QFrame):
             apps_layout.addStretch()
             layout.addLayout(apps_layout)
         
-        # 卡片样式 - 左侧效率指示条 + 右侧圆角
-        self.setStyleSheet(f"""
+        # 卡片样式 - 左侧效率指示条
+        # Apple 规范：卡片不加阴影，层级靠画布/卡片底色差与发丝线表达。
+        # 这里用 bg_secondary（卡）压在 bg_primary（画布）上形成层次。
+        self.setStyleSheet(self._card_stylesheet())
+    
+    def _card_stylesheet(self) -> str:
+        """卡片样式（构造与 mouseRelease 共用，避免两处漂移）"""
+        t = get_theme()
+        efficiency_color = get_efficiency_color(self.card.productivity_score)
+        return f"""
             QFrame#activityCard {{
                 background-color: {t.bg_secondary};
                 border: 1px solid {t.border};
                 border-left: 4px solid {efficiency_color};
-                border-radius: 0px 16px 16px 0px;
+                border-radius: 18px;
             }}
             QFrame#activityCard:hover {{
                 background-color: {t.bg_hover};
-                border-color: {t.accent};
+                border-color: {t.border_hover};
                 border-left: 4px solid {efficiency_color};
             }}
-        """)
-        
-        # 添加柔和阴影效果
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setColor(QColor(0, 0, 0, 30 if t.name == "dark" else 15))
-        shadow.setOffset(0, 6)
-        self.setGraphicsEffect(shadow)
+            QFrame#activityCard:focus {{
+                border: 2px solid {t.accent_focus};
+                border-left: 4px solid {efficiency_color};
+            }}
+        """
     
     def _format_time_range(self) -> str:
         """格式化时间范围"""
@@ -711,28 +1004,25 @@ class ActivityCardWidget(QFrame):
     
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # 点击缩放动画效果
-            self.setStyleSheet(self.styleSheet().replace("background-color:", "transform: scale(0.98); background-color:"))
             self.clicked.emit(self.card)
         super().mousePressEvent(event)
     
+    def keyPressEvent(self, event):
+        """键盘操作：Enter/Space 打开详情，Menu 键或 Shift+F10 呼出菜单"""
+        key = event.key()
+        if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit(self.card)
+            event.accept()
+            return
+        if key == Qt.Key_Menu or (key == Qt.Key_F10 and event.modifiers() & Qt.ShiftModifier):
+            self._show_context_menu(self.rect().center())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+    
     def mouseReleaseEvent(self, event):
         # 恢复原始样式
-        t = get_theme()
-        efficiency_color = get_efficiency_color(self.card.productivity_score)
-        self.setStyleSheet(f"""
-            QFrame#activityCard {{
-                background-color: {t.bg_secondary};
-                border: 1px solid {t.border};
-                border-left: 4px solid {efficiency_color};
-                border-radius: 0px 16px 16px 0px;
-            }}
-            QFrame#activityCard:hover {{
-                background-color: {t.bg_hover};
-                border-color: {t.accent};
-                border-left: 4px solid {efficiency_color};
-            }}
-        """)
+        self.setStyleSheet(self._card_stylesheet())
         super().mouseReleaseEvent(event)
     
     def _show_context_menu(self, pos):
@@ -768,23 +1058,57 @@ class ActivityCardWidget(QFrame):
         delete_action.triggered.connect(lambda: self._confirm_delete())
         menu.addAction(delete_action)
         
-        menu.exec(self.mapToGlobal(pos))
+        global_pos = self.mapToGlobal(pos)
+        # QMenu.exec() 是阻塞的：动画必须排在它之前启动，
+        # 否则事件循环被占住，动效永远不会推进。
+        menu.adjustSize()
+        menu.move(global_pos)
+        pop_in(menu, duration="menu", offset=(0, 4))
+        menu.exec(global_pos)
     
     def _confirm_delete(self):
-        """确认删除"""
-        reply = QMessageBox.question(
-            self,
-            "确认删除",
-            f"确定要删除这条活动记录吗？\n\n「{self.card.title or '未命名活动'}」",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            self.delete_requested.emit(self.card.id)
+        """
+        删除走「先做掉 + 可撤销」，不再弹确认框。
+
+        这条记录删了还能原样找回来，用确认框拦一次只是让用户多点一下，
+        还会训练出「无脑点确定」。真正的不可逆操作才该用确认框。
+        """
+        self.delete_requested.emit(self.card.id)
+
+
+class TimelineCardItemWidget(QWidget):
+    """时间轴组合项：左侧轨道刻度 + 右侧活动卡片"""
+    
+    clicked = Signal(ActivityCard)
+    edit_requested = Signal(ActivityCard)
+    delete_requested = Signal(int)
+    
+    def __init__(self, card: ActivityCard, parent=None):
+        super().__init__(parent)
+        self.card = card
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        
+        self.spine = TimelineSpineWidget(card)
+        layout.addWidget(self.spine)
+        
+        self.card_widget = ActivityCardWidget(card)
+        self.card_widget.clicked.connect(self.clicked.emit)
+        self.card_widget.edit_requested.connect(self.edit_requested.emit)
+        self.card_widget.delete_requested.connect(self.delete_requested.emit)
+        layout.addWidget(self.card_widget, 1)
 
 
 class EmptyStateWidget(QWidget):
-    """空状态组件 - 显示引导信息"""
+    """
+    空状态组件 —— 说明「为什么空」并给出「接下来做什么」。
+
+    只写一句「暂无数据」的空状态是残缺的：用户看完不知道该干嘛。
+    这里每个空态都带一个真按钮，点了就有反应。
+    """
+    
+    action_triggered = Signal(str)  # 动作标识: start / clear_search / prev_day
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -795,7 +1119,7 @@ class EmptyStateWidget(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 60, 40, 60)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
         layout.setAlignment(Qt.AlignCenter)
         
         # 大图标
@@ -804,15 +1128,50 @@ class EmptyStateWidget(QWidget):
         layout.addWidget(self.icon_label)
         
         # 标题
-        self.title_label = QLabel("开始记录你的一天")
+        self.title_label = QLabel("今天还没有活动记录")
         self.title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.title_label)
         
         # 描述
-        self.desc_label = QLabel("点击左侧「开始录制」按钮，Dayflow 将\n自动追踪你的屏幕活动并生成时间轴")
+        self.desc_label = QLabel("")
         self.desc_label.setAlignment(Qt.AlignCenter)
         self.desc_label.setWordWrap(True)
         layout.addWidget(self.desc_label)
+        
+        # 进度条：只在有真实批次数据时出现
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setVisible(False)
+        prog_row = QHBoxLayout()
+        prog_row.addStretch()
+        prog_row.addWidget(self.progress_bar, 2)
+        prog_row.addStretch()
+        layout.addLayout(prog_row)
+        
+        # 出口按钮：空状态必须能点，不能只是看着
+        self.action_btn = FeedbackButton("开始录制")
+        self.action_btn.setCursor(Qt.PointingHandCursor)
+        self.action_btn.setFixedHeight(40)
+        self.action_btn.setMinimumWidth(120)
+        self.action_btn.setAccessibleName("开始录制")
+        self.action_btn.clicked.connect(self._on_action)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(self.action_btn)
+        row.addStretch()
+        layout.addSpacing(4)
+        layout.addLayout(row)
+    
+    def _on_action(self):
+        text = self.action_btn.text()
+        if "清除" in text:
+            self.action_triggered.emit("clear_search")
+        elif "刷新" in text:
+            self.action_triggered.emit("refresh")
+        else:
+            self.action_triggered.emit("start")
     
     def apply_theme(self):
         t = get_theme()
@@ -830,17 +1189,89 @@ class EmptyStateWidget(QWidget):
             color: {t.text_muted};
             line-height: 1.6;
         """)
+        self.action_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.accent};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 9999px;
+                padding: 10px 24px;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {t.accent_hover};
+            }}
+            QPushButton:focus {{
+                border: 2px solid {t.accent_focus};
+                padding: 9px 23px;
+            }}
+        """)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {t.bg_tertiary};
+                border: none;
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {t.accent};
+                border-radius: 4px;
+            }}
+        """)
     
     def set_search_mode(self, is_search: bool):
         """切换搜索模式显示"""
         if is_search:
             self.icon_label.setText("🔍")
             self.title_label.setText("未找到匹配的活动")
-            self.desc_label.setText("尝试使用其他关键词搜索")
+            self.desc_label.setText("换个关键词，或清除搜索条件查看全部记录")
+            # 搜索无结果时，正确的动作是「清除搜索」而不是「开始录制」
+            self.action_btn.setText("清除搜索")
+            self.action_btn.setVisible(True)
         else:
             self.icon_label.setText("⏱️")
-            self.title_label.setText("开始记录你的一天")
-            self.desc_label.setText("点击左侧「开始录制」按钮，Dayflow 将\n自动追踪你的屏幕活动并生成时间轴")
+            self.title_label.setText("今天还没有活动记录")
+            self.desc_label.setText(
+                "开始录制后，Dayflow 会每隔几分钟分析一次屏幕活动，\n"
+                "自动整理成时间轴。大约 5 分钟后第一条记录就会出现。"
+            )
+            self.action_btn.setText("开始录制")
+            self.action_btn.setVisible(True)
+
+    def set_has_pending_analysis(self, has_pending: bool,
+                                done: int = 0, total: int = 0):
+        """
+        按「是否有录到但还没分析出来」区分两种空状态。
+
+        这两种「空」的原因完全不同：一种是根本没录，一种是录了但
+        分析还没跑完。混为一谈会让用户以为程序坏了，然后去重装。
+
+        有真实批次数据时给出进度条；没有就只说「正在分析」——
+        假进度条比没有进度条更糟。
+        """
+        if has_pending:
+            self.icon_label.setText("⏳")
+            if total > 0:
+                self.title_label.setText("正在分析今天的活动")
+                self.desc_label.setText(
+                    f"已处理 {done} / {total} 个批次，完成后会自动出现在这里。"
+                )
+                self.progress_bar.setVisible(True)
+                self.progress_bar.setMaximum(total)
+                self.progress_bar.setValue(done)
+            else:
+                self.title_label.setText("正在分析今天的活动")
+                self.desc_label.setText(
+                    "已经录到屏幕活动，AI 正在整理成时间轴。\n"
+                    "通常几分钟内完成，完成后会自动出现在这里。"
+                )
+                # 不知道总量就不画进度条：画一条不知道多长的条是编造
+                self.progress_bar.setVisible(False)
+            self.action_btn.setText("刷新看看")
+            self.action_btn.setVisible(True)
+        else:
+            self.progress_bar.setVisible(False)
+            self.set_search_mode(False)
 
 
 class TimelineHeader(QWidget):
@@ -865,10 +1296,12 @@ class TimelineHeader(QWidget):
         nav_layout = QHBoxLayout()
         nav_layout.setSpacing(8)
         
-        # 上一天按钮
-        self.prev_btn = QPushButton("◀")
+        # 上一天按钮（纯图标：必须有可访问名称，否则读屏只会念「按钮」）
+        self.prev_btn = FeedbackButton("◀")
         self.prev_btn.setFixedSize(32, 32)
         self.prev_btn.setCursor(Qt.PointingHandCursor)
+        self.prev_btn.setAccessibleName("上一天")
+        self.prev_btn.setToolTip("上一天")
         self.prev_btn.clicked.connect(self._go_previous_day)
         nav_layout.addWidget(self.prev_btn)
         
@@ -877,16 +1310,20 @@ class TimelineHeader(QWidget):
         nav_layout.addWidget(self.date_label)
         
         # 下一天按钮
-        self.next_btn = QPushButton("▶")
+        self.next_btn = FeedbackButton("▶")
         self.next_btn.setFixedSize(32, 32)
         self.next_btn.setCursor(Qt.PointingHandCursor)
+        self.next_btn.setAccessibleName("下一天")
+        self.next_btn.setToolTip("下一天")
         self.next_btn.clicked.connect(self._go_next_day)
         nav_layout.addWidget(self.next_btn)
         
         # 今天按钮
-        self.today_btn = QPushButton("今天")
+        self.today_btn = FeedbackButton("今天")
         self.today_btn.setFixedHeight(32)
+        self.today_btn.setMinimumWidth(60)
         self.today_btn.setCursor(Qt.PointingHandCursor)
+        self.today_btn.setAccessibleName("回到今天")
         self.today_btn.clicked.connect(self._go_today)
         nav_layout.addWidget(self.today_btn)
         
@@ -894,16 +1331,20 @@ class TimelineHeader(QWidget):
         layout.addStretch()
         
         # 导出按钮
-        self.export_btn = QPushButton("📥 导出")
+        self.export_btn = FeedbackButton("📥 导出")
         self.export_btn.setFixedHeight(32)
+        self.export_btn.setMinimumWidth(84)
         self.export_btn.setCursor(Qt.PointingHandCursor)
+        self.export_btn.setAccessibleName("导出当前时间轴")
         self.export_btn.clicked.connect(self.export_clicked.emit)
         layout.addWidget(self.export_btn)
 
         # 生成日报按钮
-        self.report_btn = QPushButton("📋 生成日报")
+        self.report_btn = FeedbackButton("📋 生成日报")
         self.report_btn.setFixedHeight(32)
+        self.report_btn.setMinimumWidth(104)
         self.report_btn.setCursor(Qt.PointingHandCursor)
+        self.report_btn.setAccessibleName("为当前日期生成日报")
         self.report_btn.clicked.connect(self.daily_report_clicked.emit)
         layout.addWidget(self.report_btn)
         
@@ -1034,7 +1475,10 @@ class TimelineView(QWidget):
     export_requested = Signal(datetime, list)  # 日期, 卡片列表
     card_updated = Signal(ActivityCard)  # 卡片更新信号
     card_deleted = Signal(int)  # 卡片删除信号
+    card_restored = Signal(ActivityCard)  # 卡片撤销恢复信号
     daily_report_clicked = Signal(datetime)  # 生成日报信号
+    start_recording_requested = Signal()  # 空状态里的「开始录制」
+    refresh_requested = Signal()  # 空状态里的「刷新看看」
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1042,6 +1486,12 @@ class TimelineView(QWidget):
         self._filtered_cards: List[ActivityCard] = []
         self._current_date = datetime.now()
         self._search_text = ""
+        self._selected_category = ""
+        self._last_deleted: Optional[ActivityCard] = None
+        self._pending_analysis = False
+        self._pending_done = 0
+        self._pending_total = 0
+        self.snackbar: Optional[Snackbar] = None
         
         # 搜索防抖定时器
         self._search_timer = QTimer()
@@ -1068,7 +1518,7 @@ class TimelineView(QWidget):
         # 搜索栏
         search_container = QWidget()
         search_layout = QHBoxLayout(search_container)
-        search_layout.setContentsMargins(24, 12, 24, 12)
+        search_layout.setContentsMargins(24, 12, 24, 8)
         
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 搜索活动标题或摘要...")
@@ -1077,6 +1527,11 @@ class TimelineView(QWidget):
         search_layout.addWidget(self.search_input)
         
         main_layout.addWidget(search_container)
+        
+        # 分类筛选胶囊栏
+        self.category_filter_bar = CategoryFilterBar()
+        self.category_filter_bar.category_selected.connect(self._on_category_selected)
+        main_layout.addWidget(self.category_filter_bar)
         
         # 统计汇总（带边距）
         stats_container = QWidget()
@@ -1103,7 +1558,18 @@ class TimelineView(QWidget):
         
         # 空状态组件
         self.empty_widget = EmptyStateWidget()
+        self.empty_widget.action_triggered.connect(self._on_empty_action)
         self.cards_layout.insertWidget(0, self.empty_widget)
+    
+    def _on_empty_action(self, action: str):
+        """空状态里的按钮动作"""
+        if action == "start":
+            self.start_recording_requested.emit()
+        elif action == "clear_search":
+            self.search_input.clear()
+            self._do_search()
+        elif action == "refresh":
+            self.refresh_requested.emit()
     
     def apply_theme(self):
         """应用主题"""
@@ -1128,9 +1594,18 @@ class TimelineView(QWidget):
             }}
         """)
         
+        # 刷新分类筛选栏主题
+        if hasattr(self, 'category_filter_bar'):
+            self.category_filter_bar.apply_theme()
+            
         # 重新创建卡片以应用新主题
         if self._cards:
             self._refresh_cards()
+    
+    def _on_category_selected(self, category: str):
+        """选择分类筛选"""
+        self._selected_category = category
+        self._refresh_cards()
     
     def _on_search_changed(self, text: str):
         """搜索文本变化 - 使用防抖"""
@@ -1144,13 +1619,19 @@ class TimelineView(QWidget):
         self._refresh_cards()
     
     def _get_filtered_cards(self) -> List[ActivityCard]:
-        """获取过滤后的卡片"""
+        """获取过滤后的卡片（支持分类与搜索词组合过滤）"""
+        cards = self._cards
+        
+        # 1. 按分类过滤
+        if self._selected_category:
+            cards = [c for c in cards if (c.category or "其他") == self._selected_category]
+            
+        # 2. 按搜索文字过滤
         if not self._search_text:
-            return self._cards
+            return cards
         
         filtered = []
-        for card in self._cards:
-            # 搜索标题和摘要
+        for card in cards:
             title = (card.title or "").lower()
             summary = (card.summary or "").lower()
             category = (card.category or "").lower()
@@ -1168,13 +1649,14 @@ class TimelineView(QWidget):
         self._refresh_cards()
     
     def add_card(self, card: ActivityCard):
-        """添加单个卡片"""
+        """添加单个卡片（来自分析完成的新活动）"""
         self._cards.append(card)
-        self._add_card_widget(card)
+        self._add_card_widget(card, animate=True)
         self._update_empty_state()
+        self._update_stats()
     
     def _refresh_cards(self, scroll_to_bottom: bool = False):
-        """刷新所有卡片 - 优化版本"""
+        """刷新所有卡片 - 支持时间轴轨道与空闲时段插桩"""
         # 保存当前滚动位置
         scrollbar = self.scroll.verticalScrollBar()
         was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 50
@@ -1184,18 +1666,34 @@ class TimelineView(QWidget):
         self.cards_container.setUpdatesEnabled(False)
         
         try:
-            # 清除现有卡片
+            # 清除现有卡片与空闲时段组件
             while self.cards_layout.count() > 1:  # 保留 stretch
                 item = self.cards_layout.takeAt(0)
                 if item.widget() and item.widget() != self.empty_widget:
                     item.widget().deleteLater()
             
+            # 更新分类筛选药丸角标数量
+            if hasattr(self, 'category_filter_bar'):
+                self.category_filter_bar.update_counts(self._cards)
+            
             # 获取过滤后的卡片
             filtered_cards = self._get_filtered_cards()
             
-            # 批量添加新卡片
-            for card in filtered_cards:
+            # 按起始时间排序
+            sorted_cards = sorted(filtered_cards, key=lambda c: c.start_time or datetime.min)
+            
+            # 批量添加新卡片，并在时间跨度 >= 15 分钟时自动插入空闲胶囊
+            prev_end_time = None
+            for card in sorted_cards:
+                if prev_end_time and card.start_time and card.start_time > prev_end_time:
+                    gap_mins = (card.start_time - prev_end_time).total_seconds() / 60.0
+                    if gap_mins >= 15.0:
+                        gap_widget = TimelineGapWidget(prev_end_time, card.start_time, gap_mins)
+                        self.cards_layout.insertWidget(self.cards_layout.count() - 1, gap_widget)
+                
                 self._add_card_widget(card, animate=False)
+                if card.end_time:
+                    prev_end_time = card.end_time
             
             self._update_empty_state(filtered_cards)
             self._update_stats()
@@ -1215,15 +1713,40 @@ class TimelineView(QWidget):
         
         QTimer.singleShot(10, restore_scroll)
     
-    def _add_card_widget(self, card: ActivityCard, animate: bool = True):
-        """添加卡片组件"""
-        widget = ActivityCardWidget(card)
+    def _add_card_widget(self, card: ActivityCard, animate: bool = True,
+                         delay: int = 0):
+        """添加卡片组件（时间轴轨道 + 卡片组合）"""
+        widget = TimelineCardItemWidget(card)
         widget.clicked.connect(self._on_card_clicked)
         widget.edit_requested.connect(self._on_edit_card)
         widget.delete_requested.connect(self._on_delete_card)
         
         # 插入到 stretch 之前
         self.cards_layout.insertWidget(self.cards_layout.count() - 1, widget)
+        widget.show()
+        
+        # 新卡片淡入：这是「刚产生了新活动」的唯一视觉信号。
+        # 批量刷新时 animate=False —— 那不是「新增」，是重绘，
+        # 给二十张卡逐个做入场动画只会拖慢刷新还让人眼花。
+        if animate:
+            rise_in(widget, duration="space", delay=delay, distance=6)
+        return widget
+
+    def _find_card_widget(self, card_id: int) -> Optional[QWidget]:
+        """按 card_id 找到对应的卡片组件"""
+        for i in range(self.cards_layout.count()):
+            w = self.cards_layout.itemAt(i).widget()
+            if w is None:
+                continue
+            card = getattr(w, "card", None)
+            if card is not None and getattr(card, "id", None) == card_id:
+                return w
+            inner = getattr(w, "card_widget", None)
+            if inner is not None:
+                c2 = getattr(inner, "card", None)
+                if c2 is not None and getattr(c2, "id", None) == card_id:
+                    return w
+        return None
     
     def _on_card_clicked(self, card: ActivityCard):
         """卡片点击 - 打开编辑对话框"""
@@ -1247,23 +1770,117 @@ class TimelineView(QWidget):
         self._refresh_cards()
     
     def _handle_card_deleted(self, card_id: int):
-        """处理卡片删除"""
+        """
+        处理卡片删除。
+
+        流程：先折叠消失 → 重建列表 → 给出撤销出口。
+        折叠动效是在回答「它走了」；撤销条是在回答「还能拿回来」。
+        两者分工明确：动效说发生了什么，撤销条说怎么办。
+        """
+        removed = next((c for c in self._cards if c.id == card_id), None)
+        if removed is None:
+            # 找不到就直接通知上层，避免静默失败
+            self.card_deleted.emit(card_id)
+            return
+
         self.card_deleted.emit(card_id)
-        # 从本地列表移除
         self._cards = [c for c in self._cards if c.id != card_id]
-        # 刷新显示
-        self._refresh_cards()
-    
+
+        target = self._find_card_widget(card_id)
+        if target is not None:
+            collapse_out(target, height=target.sizeHint().height())
+        else:
+            self._refresh_cards()
+
+        def _rebuild():
+            self._refresh_cards()
+            self._show_undo(removed)
+
+        QTimer.singleShot(160, _rebuild)
+
+    def _show_undo(self, card: ActivityCard):
+        """显示撤销提示条"""
+        title = (card.title or "这条活动记录").strip()
+        if len(title) > 24:
+            title = title[:24] + "…"
+        self._last_deleted = card
+
+        if self.snackbar is None:
+            self.snackbar = Snackbar(self)
+
+        def _undo():
+            restored = self._last_deleted
+            self._last_deleted = None
+            if restored is None:
+                return
+            # 恢复到原来的时间顺序位置
+            self._cards.append(restored)
+            self._refresh_cards()
+            # 找到复原的卡片并短暂高亮，让用户确认「真的回来了」
+            QTimer.singleShot(60, lambda: self._flash_card(restored.id))
+            self.card_restored.emit(restored)
+
+        self.snackbar.show_message(
+            f"已删除「{title}」", "撤销", _undo
+        )
+
+    def _flash_card(self, card_id: int):
+        """复原后短暂强调该卡片，让用户确认「真的回来了」"""
+        w = self._find_card_widget(card_id)
+        if w is None:
+            return
+        inner = getattr(w, "card_widget", w)
+        if not hasattr(inner, "_card_stylesheet"):
+            return
+        t = get_theme()
+        original = inner._card_stylesheet()
+        inner.setStyleSheet(f"""
+            QFrame#activityCard {{
+                background-color: {t.accent_light};
+                border: 2px solid {t.accent};
+                border-left: 4px solid {t.accent};
+                border-radius: 18px;
+            }}
+        """)
+        QTimer.singleShot(1400, lambda: inner.setStyleSheet(original))
+
     def _update_empty_state(self, cards: List[ActivityCard] = None):
         """更新空状态显示"""
         if cards is None:
             cards = self._cards
         
         if len(cards) == 0:
-            self.empty_widget.set_search_mode(bool(self._search_text))
+            if self._search_text:
+                self.empty_widget.set_search_mode(True)
+            else:
+                # 区分「还没录」和「录了但这天没分析出活动」——
+                # 两者的下一步完全不同，混为一谈会让用户以为程序坏了
+                self.empty_widget.set_has_pending_analysis(
+                    self._has_pending(), self._pending_done, self._pending_total
+                )
             self.empty_widget.setVisible(True)
         else:
             self.empty_widget.setVisible(False)
+    
+    def _has_pending(self) -> bool:
+        """当前是否有正在等待分析的活动（由外部告知）"""
+        return self._pending_analysis or self._pending_total > 0
+
+    def set_analysis_progress(self, done: int, total: int):
+        """
+        接收分析进度。
+
+        done == 0 且 total == 0 表示「没有待分析的切片」——
+        这是分析完成后的常态，不该还显示进度条。
+        """
+        self._pending_done = done
+        self._pending_total = total
+        self._pending_analysis = total > 0
+
+        if self.empty_widget.isVisible():
+            self.empty_widget.set_has_pending_analysis(
+                self._pending_analysis, done, total
+            )
     
     def _update_stats(self):
         """更新统计信息"""

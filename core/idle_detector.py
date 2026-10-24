@@ -5,7 +5,7 @@ Dayflow Windows - 用户空闲检测模块
 import logging
 import threading
 import time
-from ctypes import Structure, c_uint, sizeof, byref, windll
+from ctypes import Structure, c_uint, c_uint64, sizeof, byref, windll
 from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 
 class LASTINPUTINFO(Structure):
     _fields_ = [("cbSize", c_uint), ("dwTime", c_uint)]
+
+
+def calculate_idle_millis(current_tick: int, last_input_time: int) -> int:
+    """
+    计算空闲毫秒数，正确处理 32 位无符号整数溢出回环 (约 49.7 天回环一次)
+    """
+    curr_32 = current_tick & 0xFFFFFFFF
+    last_32 = last_input_time & 0xFFFFFFFF
+    return (curr_32 - last_32) & 0xFFFFFFFF
 
 
 class IdleDetector:
@@ -75,8 +84,13 @@ class IdleDetector:
         if not windll.user32.GetLastInputInfo(byref(lii)):
             return 0.0
 
-        tick_count = windll.kernel32.GetTickCount()
-        idle_millis = tick_count - lii.dwTime
+        if hasattr(windll.kernel32, "GetTickCount64"):
+            windll.kernel32.GetTickCount64.restype = c_uint64
+            tick_count = windll.kernel32.GetTickCount64()
+        else:
+            tick_count = windll.kernel32.GetTickCount()
+
+        idle_millis = calculate_idle_millis(tick_count, lii.dwTime)
         return idle_millis / 1000.0
 
     def _loop(self):

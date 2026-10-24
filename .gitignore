@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
+/node_modules/
 lib64/
 parts/
 sdist/
@@ -59,7 +60,7 @@ secrets.py
 api_keys.py
 
 # Project documentation (internal use only)
-项目技术要求.md
+项目技术要�?md
 
 # OS files
 .DS_Store
@@ -77,6 +78,11 @@ _run_*.py
 
 # Packaged builds
 Dayflow/
+src-tauri/target/
+src-tauri/resources/*.exe
 
 # PyInstaller (keep .spec file for reproducible builds)
 # *.spec
+
+# Tool caches
+.commandcode/

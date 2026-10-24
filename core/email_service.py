@@ -6,6 +6,8 @@ import smtplib
 import logging
 import asyncio
 import httpx
+import sys
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -916,7 +918,58 @@ class ReportGenerator:
         # 构建深度分析 HTML
         deep_html = self._build_deep_analysis_html(focus, rhythm, switching, categories, day_type)
         
-        # 完整 HTML
+        # 构建结构化数据列表供模板使用
+        stats_items = []
+        for category, minutes in stats[:6]:
+            color = category_colors.get(category, "#78716C")
+            percent = (minutes / total_minutes * 100) if total_minutes > 0 else 0
+            h, m = int(minutes // 60), int(minutes % 60)
+            bar_width = min(percent, 100)
+            stats_items.append({
+                "category": category,
+                "minutes": minutes,
+                "hours": h,
+                "mins": m,
+                "percent": percent,
+                "bar_width": bar_width,
+                "color": color,
+            })
+
+        # 尝试通过 Jinja2 加载外部模板文件
+        try:
+            from jinja2 import Environment, FileSystemLoader
+            if getattr(sys, "frozen", False):
+                base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+                template_file = base_dir / "templates" / "email_report.html"
+                if not template_file.exists():
+                    template_file = Path(__file__).parent.parent / "templates" / "email_report.html"
+            else:
+                template_file = Path(__file__).parent.parent / "templates" / "email_report.html"
+
+            if template_file.exists():
+                env = Environment(loader=FileSystemLoader(str(template_file.parent)), autoescape=True)
+                template = env.get_template("email_report.html")
+                expert_html = self._build_expert_analysis_html(expert_analysis) if expert_analysis else ""
+                return template.render(
+                    date_str=date_str,
+                    hours=hours,
+                    mins=mins,
+                    score=score,
+                    score_emoji=score_emoji,
+                    score_text=score_text,
+                    score_color=score_color,
+                    focus=focus,
+                    day_type=day_type,
+                    stats_items=stats_items,
+                    deep_html=deep_html,
+                    ai_comment=ai_comment,
+                    expert_analysis_html=expert_html,
+                    generated_at=datetime.now().strftime("%H:%M"),
+                )
+        except Exception as e:
+            logger.debug(f"Jinja2 模板渲染未启用或回退: {e}")
+
+        # 回退：内嵌渲染
         html = f"""
 <!DOCTYPE html>
 <html>

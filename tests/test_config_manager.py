@@ -15,11 +15,15 @@ from unittest.mock import MagicMock
 import pytest
 from hypothesis import given, settings, strategies as st
 from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
 
-# Ensure Qt application exists for signal testing
+# Ensure Qt application exists for signal and widget testing
 import sys
 if not QCoreApplication.instance():
-    app = QCoreApplication(sys.argv)
+    try:
+        app = QApplication(sys.argv)
+    except Exception:
+        app = QCoreApplication(sys.argv)
 
 
 class MockStorage:

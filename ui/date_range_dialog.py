@@ -11,8 +11,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, QDate, Qt
 from PySide6.QtGui import QFont
 
+from ui.themes import get_theme
+from ui.components.motion_dialog import MotionDialog
+from ui.components.scale_feedback import FeedbackButton
 
-class DateRangeDialog(QDialog):
+
+class DateRangeDialog(MotionDialog):
     """日期范围选择对话框"""
     
     # 信号：选择完成后发出 (start_date, end_date)
@@ -32,6 +36,7 @@ class DateRangeDialog(QDialog):
     
     def _setup_ui(self):
         """设置界面"""
+        t = get_theme()
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -44,7 +49,7 @@ class DateRangeDialog(QDialog):
         
         # 说明
         desc = QLabel("选择要导出的日期范围，将生成 HTML 格式的报告")
-        desc.setStyleSheet("color: #888;")
+        desc.setStyleSheet(f"color: {t.text_muted};")
         desc.setAlignment(Qt.AlignCenter)
         desc.setWordWrap(True)
         layout.addWidget(desc)
@@ -52,7 +57,7 @@ class DateRangeDialog(QDialog):
         # 分隔线
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background: #3a3a50;")
+        line.setStyleSheet(f"background: {t.divider};")
         layout.addWidget(line)
         
         # 预设选项
@@ -104,22 +109,26 @@ class DateRangeDialog(QDialog):
         cancel_btn.setMinimumWidth(80)
         cancel_btn.clicked.connect(self.reject)
         
-        export_btn = QPushButton("导出报告")
+        export_btn = FeedbackButton("导出报告")
         export_btn.setMinimumWidth(100)
-        export_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #7c3aed, stop:1 #a78bfa);
-                color: white;
+        # Apple 主 CTA：单一 Action Blue 实心药丸，无渐变
+        export_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t.accent};
+                color: #FFFFFF;
                 border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #6d28d9, stop:1 #8b5cf6);
-            }
+                border-radius: 9999px;
+                padding: 9px 20px;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {t.accent_hover};
+            }}
+            QPushButton:focus {{
+                border: 2px solid {t.accent_focus};
+                padding: 8px 19px;
+            }}
         """)
         export_btn.clicked.connect(self._on_export)
         
