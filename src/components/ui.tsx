@@ -25,6 +25,7 @@ interface ButtonProps {
   title?: string;
   fullWidth?: boolean;
   type?: "button" | "submit";
+  "aria-label"?: string;
 }
 
 const BTN_HEIGHT: Record<ButtonSize, number> = { sm: 28, md: 34, lg: 42 };
@@ -47,29 +48,30 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       onClick,
       title,
       fullWidth,
+      "aria-label": ariaLabel,
       type = "button",
     },
     ref
   ) {
-    const palette: Record<ButtonVariant, CSSProperties> = {
+    const palette: Record<ButtonVariant, CSSProperties & { "--df-button-bg": string }> = {
       primary: {
-        background: "var(--accent)",
+        "--df-button-bg": "var(--accent)",
         // --on-accent 随主题翻转：亮色是白字，暗色是深蓝（压在亮蓝底上）
         color: "var(--on-accent)",
         border: "1px solid var(--accent)",
       },
       secondary: {
-        background: "var(--bg-surface)",
+        "--df-button-bg": "var(--bg-surface)",
         color: "var(--text-primary)",
         border: "1px solid var(--border-default)",
       },
       ghost: {
-        background: "transparent",
+        "--df-button-bg": "transparent",
         color: "var(--text-secondary)",
         border: "1px solid transparent",
       },
       danger: {
-        background: "var(--danger-solid)",
+        "--df-button-bg": "var(--danger-solid)",
         // 白字压在深红填充上；--danger（亮）是给文字用的那个
         color: "var(--text-on-accent)",
         border: "1px solid var(--danger-solid)",
@@ -92,8 +94,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         type={type}
         title={title}
-        disabled={disabled || loading}
-        onClick={onClick}
+        aria-label={ariaLabel}
+        aria-busy={loading || undefined}
+        aria-disabled={loading || undefined}
+        disabled={disabled}
+        onClick={loading ? (event) => event.preventDefault() : onClick}
         className={cls}
         data-variant={variant}
         style={{
@@ -117,9 +122,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           touchAction: "manipulation",
         }}
       >
-        {loading && <Spinner size={12} />}
-        {icon}
-        {children}
+        <span className="df-busy-content">
+          <span className="df-button-label" data-hidden={loading || undefined}>
+            {icon}{children}
+          </span>
+          {loading && <Spinner size={12} />}
+        </span>
         {/* 焦点环的淡入层。必须是真的元素 ——
             CSS 压缩器会把 ::focus-visible::after 压成单冒号形式，
             Chrome 碰巧认，别的浏览器不认，实测就静默失效了。 */}
@@ -143,10 +151,6 @@ export function Spinner({ size = 14 }: { size?: number }) {
         borderRightColor: "transparent",
         borderRadius: "50%",
         opacity: 0.7,
-        // 加载指示器在减少动效下也应该转 —— 规范把它列在
-        // 「保留」清单里，因为它承载的是「正在处理」这个信息，
-        // 不是装饰。用 0.01ms 保留状态感知又不引发不适。
-        animation: `df-spin var(--dur-spin) linear infinite`,
       }}
     />
   );
@@ -258,6 +262,7 @@ export const Field = ({
       {error ? (
         <span
           role="alert"
+          className="df-feedback"
           style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}
         >
           {error}
@@ -388,7 +393,7 @@ export function Toggle({
           // 滑块跟着反色走：暗色主题开关闭时轨道是亮蓝，滑块要变深
           background: checked ? "var(--on-accent)" : "var(--bg-surface)",
           boxShadow: "var(--shadow-sm)",
-          transform: checked ? "translateX(16px)" : "translateX(0)",
+          transform: `translateX(${checked ? 16 : 0}px) scaleX(var(--knob-press, 1))`,
           transition: `transform var(--dur-base) var(--ease-out)`,
         }}
       />

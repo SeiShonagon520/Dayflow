@@ -11,43 +11,8 @@
 import { useEffect, useRef, useState } from "react";
 import { FocusRing } from "@/components/FocusRing";
 
-export type MotionLevel = "system" | "reduced" | "full";
-
-const KEY = "dayflow-motion";
-
-function systemPrefersReduced(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function apply(level: MotionLevel) {
-  const root = document.documentElement;
-  if (level === "system") {
-    root.removeAttribute("data-motion");
-  } else {
-    root.setAttribute("data-motion", level);
-  }
-}
-
-export function useMotionLevel(): [MotionLevel, (l: MotionLevel) => void] {
-  const [level, setLevel] = useState<MotionLevel>(() => {
-    if (typeof localStorage === "undefined") return "system";
-    const saved = localStorage.getItem(KEY);
-    return saved === "reduced" || saved === "full" ? saved : "system";
-  });
-
-  useEffect(() => {
-    apply(level);
-    try {
-      if (level === "system") localStorage.removeItem(KEY);
-      else localStorage.setItem(KEY, level);
-    } catch {
-      /* 无痕模式下写不进去，不影响使用 */
-    }
-  }, [level]);
-
-  return [level, setLevel];
-}
+import { MotionLevel, readMotionLevel, saveMotionLevel } from "@/lib/motion";
+import { useMQ } from "@/lib/useMediaQuery";
 
 const OPTIONS: { value: MotionLevel; label: string; hint: string }[] = [
   { value: "system", label: "跟随系统", hint: "按系统的「减少动态效果」设置" },
@@ -57,8 +22,10 @@ const OPTIONS: { value: MotionLevel; label: string; hint: string }[] = [
 
 /** 设置页里用：三段切换 */
 export function MotionControl() {
-  const [level, setLevel] = useMotionLevel();
-  const systemOn = systemPrefersReduced();
+  const [level, setLevel] = useState(readMotionLevel);
+  const systemOn = useMQ("(prefers-reduced-motion: reduce)");
+
+  useEffect(() => saveMotionLevel(level), [level]);
 
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -128,9 +95,7 @@ export function MotionControl() {
                 background: active ? "var(--bg-surface)" : "transparent",
                 color: active ? "var(--text-primary)" : "var(--text-tertiary)",
                 fontSize: "var(--text-xs)",
-                fontWeight: active
-                  ? "var(--weight-semibold)"
-                  : "var(--weight-normal)",
+                fontWeight: "var(--weight-medium)",
                 boxShadow: active ? "var(--shadow-sm)" : "none",
                 border: "none",
                 cursor: "pointer",

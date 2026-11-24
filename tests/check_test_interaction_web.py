@@ -81,8 +81,7 @@ print()
 print("=" * 68)
 print("4. 状态变化要被播报（实测页面上一条 live region 都没有）")
 print("=" * 68)
-check("Shell 有录制状态 live region",
-      'aria-live="polite"' in SHELL and "role=\"status\"" in SHELL)
+check("录制状态由同一处播报", 'role="status"' in SHELL and "recordingControl" in SHELL)
 check("撤销条是 live region", 'aria-live="polite"' in TL)
 
 print()
@@ -104,30 +103,18 @@ check("日报列表选中态有非颜色信号", "●" in REPORTS)
 
 print()
 print("=" * 68)
-print("6. 表单：校验、错误可见、不 disabled 到有效")
+print("6. 表单分组、草稿测试和就地反馈")
 print("=" * 68)
 SET = (SRC / "pages" / "SettingsPage.tsx").read_text(encoding="utf-8")
-check("有 validate 函数", "const validate" in SET)
-check("校验 API 地址", "API 地址不能为空" in SET)
-check("校验 URL 协议", "http:// 或 https://" in SET)
-check("校验数值范围", "每日目标要在 1 到 24 小时之间" in SET)
-check("保存前先校验", "const errs = validate(s)" in SET)
-check("校验失败不发请求", "if (errs.length > 0)" in SET)
-check("错误消息不做截断", 'msg.kind === "err" ? "normal"' in SET)
-# 规范：submit 不能 disabled 到表单有效。
-# 只看代码行 —— 解释这件事的注释里正好写着这个字符串。
-SET_CODE = re.sub(r"/\*.*?\*/", "", SET, flags=re.S)
-check("保存按钮不再 disabled={!dirty}",
-      "disabled={!dirty}" not in SET_CODE)
-check("没改动时有解释", "没有需要保存的改动" in SET)
-check("错误用 assertive 播报", 'aria-live={msg.kind === "err"' in SET)
-check("焦点送到出错字段", "document.getElementById(first.id)?.focus()" in SET)
-# FIELDS 的 id 必须是真实存在的字段，否则焦点落空
-for fid in re.findall(r'\{ id: "([\w-]+)"', SET):
-    check(f"字段 #{fid} 存在", f'id="{fid}"' in SET)
-# test() 也要校验，否则用户看到「连接失败」实际是表单没填对
-test_body = SET.split("const test = async")[1][:900]
-check("测试连接前也校验", "validate(s)" in test_body)
+check("分组校验", "validate(group, draft)" in SET)
+check("校验地址并聚焦错误字段", "new URL(values.api_url)" in SET and "getElementById(error.field)?.focus()" in SET)
+check("只保存当前组变动", "const keys = changed(group)" in SET and "api.saveSettings(patch)" in SET)
+check("无变更时不显示保存按钮", "{edited && <>" in SET)
+check("支持撤回草稿", "撤回更改" in SET and "saved[key]" in SET)
+check("分组结果使用可访问状态", 'notice.kind === "err" ? "alert" : "status"' in SET)
+test_body = SET.split("const test = async")[1].split("const testEmail", 1)[0]
+check("连接测试使用草稿", "api.testConnection(" in test_body and "await save" not in test_body)
+check("清理需要再次确认", "确认清理" in SET and "<Dialog" in SET)
 
 print()
 print("=" * 68)
@@ -145,7 +132,7 @@ check("倒计时条是纯装饰（不参与播报）",
       'aria-hidden' in TL and "df-undo-timer" in TL)
 # 减少动效下砍成 0.01ms 会让条子瞬间缩到 0（实测），
 # 比没有更糟 —— 换成步进，形状仍随时间变化
-check("reduce 下倒计时保留为步进", "df-undo-timer-steps" in CSS)
+check("减少动效下隐藏运动计时条，保留撤销按钮", ".df-undo-timer { display: none; }" in CSS and "撤销" in TL)
 
 print()
 print("=" * 68)

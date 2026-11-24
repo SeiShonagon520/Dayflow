@@ -82,7 +82,7 @@ class DashboardExporter:
         
         # 模板目录 - 支持打包后的路径
         self.template_dir = self._get_template_dir()
-        self.env = Environment(loader=FileSystemLoader(self.template_dir))
+        self.env = Environment(loader=FileSystemLoader(self.template_dir), autoescape=True)
         
         # 添加自定义过滤器
         self.env.filters['format_duration'] = format_duration
@@ -126,11 +126,7 @@ class DashboardExporter:
             output_dir = config.APP_DATA_DIR / "reports"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 收集数据
-        data = self._collect_data(start_date, end_date)
-        
-        # 渲染模板
-        html_content = self._render_template(data)
+        html_content = self.render(start_date, end_date)
         
         # 生成文件名
         if start_date == end_date:
@@ -146,6 +142,9 @@ class DashboardExporter:
         
         logger.info(f"仪表盘已导出: {output_path}")
         return output_path
+
+    def render(self, start_date: date, end_date: date) -> str:
+        return self._render_template(self._collect_data(start_date, end_date))
     
     def export_and_open(self, start_date: date, end_date: date) -> Path:
         """
@@ -197,9 +196,9 @@ class DashboardExporter:
         
         # 日期范围文本
         if start_date == end_date:
-            date_range = start_date.strftime("%Y年%m月%d日")
+            date_range = f"{start_date.year:04d}年{start_date.month:02d}月{start_date.day:02d}日"
         else:
-            date_range = f"{start_date.strftime('%Y年%m月%d日')} ~ {end_date.strftime('%Y年%m月%d日')}"
+            date_range = f"{start_date.isoformat()} 至 {end_date.isoformat()}"
         
         return DashboardData(
             title=f"Dayflow 生产力报告 - {date_range}",

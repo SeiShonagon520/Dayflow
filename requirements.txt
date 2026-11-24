@@ -1,14 +1,10 @@
 # Dayflow for Windows - Dependencies
 # Python 3.10+
 
-# GUI Framework
-PySide6>=6.6.0
-
 # Screen Capture
 dxcam>=0.0.5
 
 # Video Processing
-ffmpeg-python>=0.2.0
 opencv-python>=4.8.0
 
 # HTTP Client (async, HTTP/2 support)
@@ -26,4 +22,3 @@ numpy>=1.24.0
 
 # Testing
 pytest>=7.4.0
-hypothesis>=6.92.0

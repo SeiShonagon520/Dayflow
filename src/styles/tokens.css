@@ -144,24 +144,24 @@
      时长分档，不随手写毫秒。离开比进入快 —— 用户已经知道
      它要走了。规范基线 150ms：快于 100ms 显抖动，慢于 300ms 显迟钝。
 
-     --ease-spring 目前没有界面在用，留着是为了将来做手势跟手动画；
      规范明确反对 bounce/elastic，这里只保留一个不带过冲的 spring。 */
-  --ease-out: cubic-bezier(0.2, 0, 0, 1);
-  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-spring: cubic-bezier(0.34, 1.26, 0.64, 1);
-
-  --dur-tactile: 100ms;   /* 按下反馈、快速关闭 */
-  --dur-base: 150ms;      /* hover、焦点环 —— 全站基线 */
-  --dur-reveal: 200ms;    /* 小范围揭示、成功确认 */
-  --dur-exit: 150ms;      /* 退场：比入场短，但不是瞬间消失 */
-  --dur-handoff: 200ms;   /* 骨架 → 内容的交接淡入淡出 */
-  --dur-menu: 250ms;      /* 菜单、弹层、小对话框 */
-  --dur-space: 300ms;     /* 展开折叠、页面切换 */
-  --dur-page: 400ms;      /* 整屏级转场 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
+  --motion-distance: 4px;
+  --motion-panel-scale: 0.985;
+  --motion-press-scale: 0.98;
+  --dur-tactile: 85ms;
+  --dur-base: 135ms;
+  --dur-reveal: 150ms;
+  --dur-exit: 120ms;
+  --dur-handoff: 150ms;
+  --dur-menu: 180ms;
+  --dur-space: 200ms;
+  --dur-page: 200ms;
   --dur-spin: 800ms;      /* 加载指示器转一圈 */
   /* 撤销窗口。必须和 TimelinePage 里的 UNDO_MS 一致 ——
      动画比计时器长或短，倒计时条和实际消失就对不上。 */
-  --undo-window: 6000ms;
+  --undo-window: 10000ms;
 
   /* ── 层级 ────────────────────────────────────────────── */
   --z-base: 0;

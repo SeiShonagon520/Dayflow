@@ -15,7 +15,7 @@ export const BP_RAIL = 1000;
 /** 导航移到屏幕底部，变成标签栏 */
 export const BP_BOTTOM = 620;
 
-function useMQ(query: string): boolean {
+export function useMQ(query: string): boolean {
   const [match, setMatch] = useState(() =>
     typeof window !== "undefined" && window.matchMedia
       ? window.matchMedia(query).matches

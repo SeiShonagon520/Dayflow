@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { PageKey, Shell } from "@/components/Shell";
 import { TimelinePage } from "@/pages/TimelinePage";
 import { StatsPage } from "@/pages/StatsPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { useRecording } from "@/lib/useRecording";
 import { api } from "@/lib/api";
 import { todayStr } from "@/lib/format";
 import { Button } from "@/components/ui";
@@ -13,63 +14,49 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 export default function App() {
   const [page, setPage] = useState<PageKey>("timeline");
   const [date, setDate] = useState(todayStr());
+  const [reportDate, setReportDate] = useState<{ day: string } | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [bridgeReady, setBridgeReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
-  const checkBridge = () => {
-    setInitError(null);
-    let attempts = 0;
-    const max = 40; // 40 * 400ms = 16s 缓冲期，足够 PyInstaller 解压并完成初始化
+  const [attempt, setAttempt] = useState(0);
+  const [seen, setSeen] = useState({ reports: false, settings: false });
+  const [setupRequest, setSetupRequest] = useState(0);
+
+  const go = (next: PageKey) => {
+    if (next === "reports" || next === "settings") {
+      setSeen((previous) => ({ ...previous, [next]: true }));
+    }
+    setPage(next);
+  };
+
+  const recordingControl = useRecording(bridgeReady, setStartError, () => {
+    setStartError(null);
+    setSetupRequest((previous) => previous + 1);
+    go("settings");
+    if (isTauri()) {
+      void invoke("show_main_window").catch(() => {});
+    }
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number;
+    const deadline = Date.now() + 16_000;
     const tick = async () => {
       try {
-        await api.health();
-        setBridgeReady(true);
+        await api.health(1500);
+        if (!cancelled) setBridgeReady(true);
       } catch {
-        attempts++;
-        if (attempts < max) {
-          setTimeout(tick, 400);
-        } else {
-          setInitError("无法连接后台服务，请检查应用日志或重启 Dayflow");
-        }
+        if (cancelled) return;
+        if (Date.now() < deadline) timer = window.setTimeout(tick, 400);
+        else setInitError("Dayflow 后台未能启动。请重试，或退出 Dayflow 后重新打开。");
       }
     };
-    tick();
-  };
-
-  useEffect(() => {
-    checkBridge();
-  }, []);
-
-  // 从托盘点「开始录制 / 停止录制」时，Rust 侧会发这个事件
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      try {
-        unlisten = await listen<string[]>("tray-action", (e) => {
-          const [kind, action] = e.payload;
-          if (kind !== "tray") return;
-          if (action === "start") {
-            api.startRecording().catch((err) => setStartError(String(err)));
-          } else if (action === "stop") {
-            api.stopRecording().catch(() => {});
-          }
-        });
-      } catch {
-        // 浏览器里跑（预览）时没有 Tauri runtime，忽略
-      }
-    })();
-    return () => unlisten?.();
-  }, []);
-
-  const startRecording = async () => {
-    setStartError(null);
-    try {
-      await api.startRecording();
-    } catch (e) {
-      setStartError(e instanceof Error ? e.message : "启动录制失败");
-    }
-  };
+    setInitError(null);
+    void tick();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [attempt]);
 
   if (!bridgeReady) {
     if (initError) {
@@ -106,7 +93,7 @@ export default function App() {
             >
               {initError}
             </p>
-            <Button variant="primary" onClick={checkBridge}>
+            <Button variant="primary" onClick={() => setAttempt((previous) => previous + 1)}>
               重试
             </Button>
           </div>
@@ -168,45 +155,40 @@ export default function App() {
   }
 
   return (
-    <Shell page={page} onPage={setPage} onError={setStartError}>
-      {/* key={page} 强制重建 DOM 节点 —— React 默认复用同一节点，
-          不换 key 的话切换页面时入场动画只会跑第一次。
-
-          每个页面套一层错误边界：一个页面崩了，导航和窗口还在，
-          用户还能切走。实测没有边界时，日报页一个 undefined.length
-          就让 .df-shell 从 DOM 消失，整个窗口变白屏。 */}
-      <div key={page} className="df-page">
-        {page === "timeline" && (
-          <ErrorBoundary label="时间轴">
-            <TimelinePage
-              date={date}
-              onDateChange={setDate}
-              onOpenReports={() => setPage("reports")}
-              onStartRecording={startRecording}
-            />
-          </ErrorBoundary>
-        )}
-        {page === "stats" && (
-          <ErrorBoundary label="统计">
-            <StatsPage />
-          </ErrorBoundary>
-        )}
-        {page === "reports" && (
-          <ErrorBoundary label="日报">
-            <ReportsPage />
-          </ErrorBoundary>
-        )}
-        {page === "settings" && (
-          <ErrorBoundary label="设置">
-            <SettingsPage />
-          </ErrorBoundary>
-        )}
+    <Shell page={page} onPage={go} onError={setStartError} recordingControl={recordingControl}>
+      <div className="df-page" hidden={page !== "timeline"}>
+        <ErrorBoundary label="时间轴">
+          <TimelinePage date={date} active={page === "timeline"} onDateChange={setDate}
+            onOpenReports={() => { setReportDate({ day: date }); go("reports"); }}
+            recordingControl={recordingControl} />
+        </ErrorBoundary>
       </div>
+
+      {page === "stats" && (
+        <div className="df-page"><ErrorBoundary label="统计"><StatsPage /></ErrorBoundary></div>
+      )}
+
+      {seen.reports && (
+        <div className="df-page" hidden={page !== "reports"}>
+          <ErrorBoundary label="日报">
+            <ReportsPage initialDate={reportDate} active={page === "reports"}
+              onOpenTimeline={(day) => { setDate(day); go("timeline"); }} />
+          </ErrorBoundary>
+        </div>
+      )}
+
+      {seen.settings && (
+        <div className="df-page" hidden={page !== "settings"}>
+          <ErrorBoundary label="设置">
+            <SettingsPage setupRequest={setupRequest} isRecording={recordingControl.state?.isRecording ?? false} />
+          </ErrorBoundary>
+        </div>
+      )}
 
       {startError && (
         <div
           role="alert"
-          className="df-shake"
+          className="df-feedback"
           style={{
             position: "fixed",
             bottom: "var(--space-6)",

@@ -7,7 +7,7 @@ import logging
 import threading
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from contextlib import contextmanager
 
@@ -291,17 +291,19 @@ class StorageManager:
     
     # ==================== Timeline Cards ====================
     
-    def save_card(self, card: ActivityCard, batch_id: Optional[int] = None) -> int:
+    def save_card(self, card: ActivityCard, batch_id: Optional[int] = None, *, restore_id: Optional[int] = None) -> int:
         """保存时间轴卡片"""
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO timeline_cards 
-                (batch_id, category, title, summary, start_time, end_time, 
+                (id, batch_id, category, title, summary, start_time, end_time,
                  app_sites_json, distractions_json, productivity_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
                 """,
                 (
+                    restore_id,
                     batch_id,
                     card.category,
                     card.title,
@@ -313,21 +315,23 @@ class StorageManager:
                     card.productivity_score
                 )
             )
-            return cursor.lastrowid
+            return restore_id if restore_id is not None else cursor.lastrowid
     
     def get_cards_for_date(self, date: datetime) -> List[ActivityCard]:
         """获取指定日期的时间轴卡片"""
-        start = date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        day = date.date()
+        start = day.isoformat()
+        # Match both ISO datetimes and SQLite timestamps with a space separator.
+        end = (day + timedelta(days=1)).isoformat() if day < datetime.max.date() else start + "U"
         
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 SELECT * FROM timeline_cards 
-                WHERE start_time >= ? AND start_time <= ?
-                ORDER BY start_time ASC
+                WHERE start_time >= ? AND start_time < ?
+                ORDER BY replace(start_time, ' ', 'T') ASC
                 """,
-                (start.isoformat(), end.isoformat())
+                (start, end)
             )
             return [self._row_to_card(row) for row in cursor.fetchall()]
     

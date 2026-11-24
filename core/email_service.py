@@ -3,15 +3,15 @@ Dayflow - 邮件推送服务
 支持 QQ 邮箱定时发送效率报告，含 AI 点评功能
 """
 import smtplib
+import ssl
 import logging
-import asyncio
 import httpx
 import sys
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from datetime import datetime
+from typing import Optional
 from dataclasses import dataclass
 
 import config
@@ -60,7 +60,8 @@ class EmailService:
             
             # 发送邮件
             logger.info(f"正在连接 SMTP 服务器: {self.config.smtp_server}:{self.config.smtp_port}")
-            server = smtplib.SMTP_SSL(self.config.smtp_server, self.config.smtp_port, timeout=30)
+            server = smtplib.SMTP_SSL(self.config.smtp_server, self.config.smtp_port,
+                                     timeout=30, context=ssl.create_default_context())
             try:
                 logger.info("SMTP 连接成功，正在登录...")
                 server.login(self.config.sender_email, self.config.auth_code)
@@ -837,7 +838,7 @@ class ReportGenerator:
         
         # 构建 AI 使用的统计数据
         ai_stats = {
-            'date': date.strftime("%Y年%m月%d日"),
+            'date': f"{date.year:04d}年{date.month:02d}月{date.day:02d}日",
             'recorded_minutes': int(total_minutes),
             'score': avg_score,
             'categories': [(cat, int(mins)) for cat, mins in sorted_stats]
@@ -864,7 +865,7 @@ class ReportGenerator:
                     total_minutes: int, score: int, deep_analysis: dict, 
                     ai_comment: str, expert_analysis: str = "") -> str:
         """构建 HTML 邮件内容（含深度分析和专业报告）"""
-        date_str = date.strftime("%Y年%m月%d日")
+        date_str = f"{date.year:04d}年{date.month:02d}月{date.day:02d}日"
         hours = int(total_minutes // 60)
         mins = int(total_minutes % 60)
         
@@ -1213,288 +1214,3 @@ class ReportGenerator:
                     </p>
                 </div>
             </div>"""
-
-
-class EmailScheduler:
-    """
-    邮件定时调度器 - 增强版
-    
-    功能:
-    - 支持可配置的发送时间
-    - 持久化发送记录到数据库
-    - 应用启动时检查错过的报告
-    - 系统唤醒时重新检查
-    - 带指数退避的重试机制
-    - 发送失败时托盘通知
-    """
-    
-    # 错过报告的补发窗口（小时）
-    CATCH_UP_WINDOW_HOURS = 2
-    
-    # 重试配置
-    MAX_RETRIES = 3
-    RETRY_BASE_DELAY = 60  # 秒
-    
-    def __init__(
-        self, 
-        email_service: EmailService, 
-        report_generator: ReportGenerator,
-        storage=None,
-        config_manager=None,
-        tray_icon=None
-    ):
-        """
-        初始化邮件调度器
-        
-        Args:
-            email_service: 邮件服务实例
-            report_generator: 报告生成器实例
-            storage: StorageManager 实例（用于持久化发送记录）
-            config_manager: ConfigManager 实例（用于获取可配置发送时间）
-            tray_icon: 系统托盘图标（用于发送通知）
-        """
-        self.email_service = email_service
-        self.report_generator = report_generator
-        self.storage = storage
-        self.config_manager = config_manager
-        self.tray_icon = tray_icon
-        
-        # 内存缓存（兼容旧逻辑）
-        self._last_noon_send: Optional[datetime] = None
-        self._last_night_send: Optional[datetime] = None
-    
-    def on_app_start(self) -> None:
-        """
-        应用启动时检查错过的报告
-        
-        如果上次发送时间超过 24 小时但在补发窗口内，则补发
-        """
-        logger.info("检查是否有错过的邮件报告...")
-        
-        send_times = self._get_send_times()
-        now = datetime.now()
-        
-        for hour, minute in send_times:
-            period = f"{hour:02d}:{minute:02d}"
-            last_send = self._get_last_send_time(period)
-            
-            if last_send is None:
-                continue
-            
-            # 计算今天的预定发送时间
-            scheduled_today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            
-            # 如果预定时间在未来，检查昨天的
-            if scheduled_today > now:
-                scheduled_today -= timedelta(days=1)
-            
-            # 检查是否错过（上次发送在预定时间之前，且在补发窗口内）
-            if last_send < scheduled_today:
-                time_since_scheduled = (now - scheduled_today).total_seconds() / 3600
-                if time_since_scheduled <= self.CATCH_UP_WINDOW_HOURS:
-                    logger.info(f"检测到错过的报告 ({period})，正在补发...")
-                    self._send_report(period)
-    
-    def on_system_wake(self) -> None:
-        """
-        系统从睡眠唤醒时调用
-        
-        重新检查是否有错过的报告
-        """
-        logger.info("系统唤醒，重新检查邮件报告...")
-        self.on_app_start()
-    
-    def check_and_send(self):
-        """检查是否需要发送报告（每分钟调用一次）"""
-        now = datetime.now()
-        today = now.date()
-        
-        send_times = self._get_send_times()
-        
-        for hour, minute in send_times:
-            # 检查是否在发送窗口内（10 分钟容错）
-            if now.hour == hour and now.minute < 10:
-                period = f"{hour:02d}:{minute:02d}"
-                last_send = self._get_last_send_time(period)
-                
-                # 检查今天是否已发送
-                if last_send is None or last_send.date() != today:
-                    logger.info(f"触发 {period} 邮件发送")
-                    self._send_report(period)
-        
-        # 兼容旧逻辑（硬编码时间）
-        if not send_times or send_times == [(12, 0), (22, 0)]:
-            # 中午 12:00-12:10 时间窗口
-            if now.hour == 12 and now.minute < 10:
-                if self._last_noon_send is None or self._last_noon_send.date() != today:
-                    logger.info("触发午间邮件发送")
-                    self._send_report("noon")
-                    self._last_noon_send = now
-            
-            # 晚上 22:00-22:10 时间窗口
-            if now.hour == 22 and now.minute < 10:
-                if self._last_night_send is None or self._last_night_send.date() != today:
-                    logger.info("触发晚间邮件发送")
-                    self._send_report("night")
-                    self._last_night_send = now
-    
-    def _get_send_times(self) -> List[Tuple[int, int]]:
-        """获取配置的发送时间列表"""
-        if self.config_manager:
-            return self.config_manager.get_email_send_times()
-        return [(12, 0), (22, 0)]  # 默认值
-    
-    def _send_report(self, period: str):
-        """发送报告（带重试）"""
-        success = self._send_with_retry(period)
-        
-        if not success:
-            # 发送托盘通知
-            self._notify_failure(period)
-    
-    def _send_with_retry(self, period: str) -> bool:
-        """
-        带指数退避重试的发送逻辑
-        
-        Args:
-            period: 时间段标识
-        
-        Returns:
-            是否发送成功
-        """
-        now = datetime.now()
-        date_str = now.strftime("%m月%d日")
-        
-        # 构建邮件主题
-        if period == "noon":
-            subject = f"📊 Dayflow 午间报告 - {date_str}"
-        elif period == "night":
-            subject = f"📊 Dayflow 晚间报告 - {date_str}"
-        else:
-            subject = f"📊 Dayflow {period} 报告 - {date_str}"
-        
-        last_error = ""
-        
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                html = self.report_generator.generate_daily_report(now)
-                success, error_msg = self.email_service.send_report(subject, html)
-                
-                if success:
-                    logger.info(f"定时报告发送成功: {period} (尝试 {attempt + 1})")
-                    self._save_last_send_time(period, now, success=True, retry_count=attempt)
-                    return True
-                else:
-                    last_error = error_msg
-                    logger.warning(f"发送失败 (尝试 {attempt + 1}/{self.MAX_RETRIES}): {error_msg}")
-            
-            except Exception as e:
-                last_error = str(e)
-                logger.error(f"发送异常 (尝试 {attempt + 1}/{self.MAX_RETRIES}): {e}")
-            
-            # 指数退避等待
-            if attempt < self.MAX_RETRIES - 1:
-                delay = self.RETRY_BASE_DELAY * (2 ** attempt)
-                logger.info(f"等待 {delay} 秒后重试...")
-                import time
-                time.sleep(delay)
-        
-        # 所有重试都失败
-        logger.error(f"定时报告发送失败（已重试 {self.MAX_RETRIES} 次）: {period}")
-        self._save_last_send_time(period, now, success=False, error_message=last_error, retry_count=self.MAX_RETRIES)
-        return False
-    
-    def _get_last_send_time(self, period: str) -> Optional[datetime]:
-        """从数据库获取上次成功发送时间"""
-        if not self.storage:
-            # 兼容模式：使用内存缓存
-            if period == "noon":
-                return self._last_noon_send
-            elif period == "night":
-                return self._last_night_send
-            return None
-        
-        try:
-            # 使用独立连接查询
-            import sqlite3
-            conn = sqlite3.connect(str(self.storage.db_path), timeout=10.0)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                """
-                SELECT send_time FROM email_send_log 
-                WHERE period = ? AND success = 1 
-                ORDER BY send_time DESC LIMIT 1
-                """,
-                (period,)
-            )
-            row = cursor.fetchone()
-            conn.close()
-            
-            if row:
-                return datetime.fromisoformat(row["send_time"])
-            return None
-        
-        except Exception as e:
-            logger.warning(f"获取上次发送时间失败: {e}")
-            return None
-    
-    def _save_last_send_time(
-        self, 
-        period: str, 
-        send_time: datetime, 
-        success: bool = True,
-        error_message: str = "",
-        retry_count: int = 0
-    ) -> None:
-        """保存发送记录到数据库"""
-        # 更新内存缓存
-        if period == "noon":
-            self._last_noon_send = send_time
-        elif period == "night":
-            self._last_night_send = send_time
-        
-        if not self.storage:
-            return
-        
-        try:
-            import sqlite3
-            conn = sqlite3.connect(str(self.storage.db_path), timeout=10.0)
-            conn.execute("PRAGMA synchronous=FULL")
-            conn.execute(
-                """
-                INSERT INTO email_send_log (period, send_time, success, error_message, retry_count)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (period, send_time.isoformat(), 1 if success else 0, error_message, retry_count)
-            )
-            conn.commit()
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.close()
-            logger.debug(f"已保存发送记录: {period} at {send_time}")
-        
-        except Exception as e:
-            logger.error(f"保存发送记录失败: {e}")
-    
-    def _notify_failure(self, period: str) -> None:
-        """发送失败时显示托盘通知"""
-        if self.tray_icon:
-            try:
-                self.tray_icon.showMessage(
-                    "Dayflow 邮件发送失败",
-                    f"{period} 报告发送失败，请检查网络和邮箱配置",
-                    self.tray_icon.MessageIcon.Warning,
-                    5000
-                )
-            except Exception as e:
-                logger.warning(f"显示托盘通知失败: {e}")
-    
-    def send_test_email(self) -> tuple:
-        """发送测试邮件，返回 (成功, 错误信息)"""
-        try:
-            now = datetime.now()
-            subject = f"🧪 Dayflow 测试邮件 - {now.strftime('%H:%M')}"
-            html = self.report_generator.generate_daily_report(now)
-            return self.email_service.send_report(subject, html)
-        except Exception as e:
-            logger.error(f"发送测试邮件失败: {e}")
-            return False, str(e)

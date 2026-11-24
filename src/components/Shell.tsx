@@ -16,11 +16,13 @@
  */
 
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { ApiError, RecordingState, api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { Button } from "@/components/ui";
 import { FocusRing } from "@/components/FocusRing";
 import { LineIcon, LineIconName } from "@/components/LineIcon";
 import { useIsNarrow, useIsPhone } from "@/lib/useMediaQuery";
+import { useRecording } from "@/lib/useRecording";
+import { restorePreviousMotion } from "@/lib/motion";
 
 export type PageKey = "timeline" | "reports" | "stats" | "settings";
 
@@ -66,42 +68,23 @@ function NavItem({
 function RecordingStatus({
   recording,
   paused,
+  idlePaused,
   compact,
 }: {
   recording: boolean;
   paused: boolean;
+  idlePaused: boolean;
   compact: boolean;
 }) {
-  return (
-    <div
-      className="df-rec-status"
-      data-compact={compact ? "true" : "false"}
-      title={compact ? (recording ? (paused ? "录制已暂停" : "录制中") : "未录制")
-                      : undefined}
-    >
-      {recording && (
-        <span
-          aria-hidden
-          className="df-rec-dot"
-          style={{
-            background: "var(--recording)",
-            animation: "df-pulse 1.6s var(--ease-in-out) infinite",
-          }}
-        />
-      )}
-      {/* 收起时只留色点，但状态不能只靠颜色表达：
-          读屏读到的是 aria-label，视觉用户看到的是色点 + 悬停提示。 */}
-      {collapsedLabel(compact, recording, paused)}
-    </div>
-  );
-}
+  const state = !recording ? "idle" : paused ? "paused" : "recording";
+  const label = !recording ? "未录制" : idlePaused ? "空闲暂停" : paused ? "已暂停" : "录制中";
 
-function collapsedLabel(compact: boolean, recording: boolean, paused: boolean) {
-  if (!compact) return recording ? (paused ? "已暂停" : "录制中") : "未录制";
   return (
-    <span className="u-sr-only">
-      {recording ? (paused ? "录制已暂停" : "录制中") : "未录制"}
-    </span>
+    <div className="df-rec-status" data-compact={compact ? "true" : "false"}
+      data-state={state} title={compact ? label : undefined} role="status">
+      <span aria-hidden className="df-rec-dot" />
+      <span key={state} className={compact ? "u-sr-only" : "df-feedback"}>{label}</span>
+    </div>
   );
 }
 
@@ -109,14 +92,15 @@ export function Shell({
   page,
   onPage,
   onError,
+  recordingControl,
   children,
 }: {
   page: PageKey;
   onPage: (p: PageKey) => void;
   onError?: (msg: string | null) => void;
+  recordingControl: ReturnType<typeof useRecording>;
   children: ReactNode;
 }) {
-  const [rec, setRec] = useState<RecordingState | null>(null);
   /* 主题：后端是唯一真相，localStorage 只是启动缓存。
 
      之前两边各存各的 —— 这里写 localStorage，设置页把 theme 读出来
@@ -132,6 +116,8 @@ export function Shell({
   /* 用户在本轮里手动切过就不要被后端覆盖，
      否则刚点的按钮会被一个迟到的响应改回去。 */
   const themeTouched = useRef(false);
+  const themeVersion = useRef(0);
+  const themeWrites = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -143,6 +129,7 @@ export function Shell({
     api
       .getSettings()
       .then((s) => {
+        restorePreviousMotion(s.reduce_motion);
         const t = s.theme === "dark" ? "dark" : s.theme === "light" ? "light" : null;
         if (t && !themeTouched.current) setTheme(t);
       })
@@ -157,90 +144,41 @@ export function Shell({
     setTheme(next);
     /* 立刻写回后端。失败要说出来 —— 静默失败正是「两个真相源」
        最开始出现的原因。 */
-    api
-      .saveSettings({ theme: next })
-      .then(() => onError?.(null))
-      .catch((e) =>
-        onError?.(e instanceof ApiError ? e.message : "主题没能保存，重启后会还原"));
+    const version = ++themeVersion.current;
+    themeWrites.current = themeWrites.current.then(() => {
+      if (version === themeVersion.current) return api.saveSettings({ theme: next });
+    }).catch((error) => {
+      if (version === themeVersion.current) {
+        onError?.(error instanceof ApiError ? error.message : "主题未能保存，请重试");
+      }
+    });
   };
 
-  const poll = async () => {
-    try {
-      setRec(await api.getRecordingState());
-    } catch {
-      /* 后端还没起来，忽略 */
-    }
-  };
-
-  useEffect(() => {
-    poll();
-    const t = window.setInterval(poll, 3000);
-    return () => window.clearInterval(t);
-  }, []);
-
+  const { state: rec, pending, run } = recordingControl;
   const recording = rec?.isRecording ?? false;
   const paused = rec?.isPaused || rec?.isIdlePaused || false;
-
-  /* 请求在飞的时候把按钮锁住。
-     实测连点两次「开始录制」会发出两个 POST /api/recording/start ——
-     recording 要等请求返回才翻转，中间那几百毫秒按钮看着还能点。
-
-     锁必须是 ref，不能用 state 判：两次点击可能落在同一次 render 的
-     闭包里，都读到 pending === false，然后各自放行 —— 第一版就是这么
-     写的，实测 POST 仍是 2 次。ref 的读写是同步的，不受渲染批次影响。
-     state 只用来给按钮上禁用态和转圈（视觉反馈）。 */
-  const busyRef = useRef(false);
-  const [pending, setPending] = useState(false);
-
-  const toggleRecording = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setPending(true);
-    try {
-      if (recording) {
-        await api.stopRecording();
-      } else {
-        await api.startRecording();
-      }
-      onError?.(null);
-      await poll();
-    } catch (e) {
-      // 启动失败最常见的是没配 API Key —— 把它说出来，
-      // 静默失败会让人以为按钮坏了
-      onError?.(e instanceof Error ? e.message : "录制操作失败");
-    } finally {
-      busyRef.current = false;
-      setPending(false);
-    }
-  };
+  const action = recording ? (paused ? "resume" : "pause") : "start";
+  const actionLabel = recording ? (paused ? "继续录制" : "暂停录制")
+    : rec?.needsSetup ? "连接分析模型" : "开始录制";
 
   const phone = useIsPhone();
   const rail = useIsNarrow();
   /* 手机上不再有侧边栏，导航变成底部标签栏 */
   const collapsed = rail && !phone;
 
-  /* 手机上主操作移到内容底部的拇指区。
-     录制是最频繁的动作，不能要求用户伸到屏幕左上角。
-     图标栏（56px）放不下「停止录制」四个字，收成图标 + tooltip。 */
   const mainAction = (
-    <Button
-      variant={recording ? "secondary" : "primary"}
-      fullWidth={!collapsed}
-      /* 侧栏里是竖排排列，40px 的命中高度不会显得重 */
-      size={collapsed ? "md" : phone ? "lg" : "md"}
-      onClick={toggleRecording}
-      /* 请求在飞时禁用 + 转圈。标签保持不变 ——
-         加载中的按钮改名字会让人以为点出了别的状态。 */
-      loading={pending}
-      title={collapsed
-        ? (recording ? "停止录制" : "开始录制")
-        : undefined}
-      aria-label={recording ? "停止录制" : "开始录制"}
-    >
-      {!collapsed && (recording ? "停止录制" : "开始录制")}
-      <span className="df-rail-glyph" aria-hidden>
-        {recording ? "■" : "●"}
-      </span>
+    <Button variant="primary" fullWidth={!collapsed && !phone} size={phone ? "lg" : "md"}
+      onClick={() => run(action)} loading={pending === action} disabled={pending !== null && pending !== action}
+      title={actionLabel} aria-label={actionLabel}>
+      {collapsed ? (recording && !paused ? "Ⅱ" : "▶") : actionLabel}
+    </Button>
+  );
+
+  const stopAction = recording && (
+    <Button fullWidth={!collapsed && !phone} size="sm" onClick={() => run("stop")}
+      loading={pending === "stop"} disabled={pending !== null && pending !== "stop"}
+      title="停止录制" aria-label="停止录制">
+      {collapsed ? "■" : "停止录制"}
     </Button>
   );
 
@@ -275,9 +213,10 @@ export function Shell({
 
           <div style={{ flex: 1 }} />
 
-          <RecordingStatus recording={recording} paused={paused} compact={collapsed} />
+          <RecordingStatus recording={recording} paused={paused} idlePaused={!!rec?.isIdlePaused} compact={collapsed} />
 
           {mainAction}
+          {stopAction}
 
           <Button
             variant="ghost"
@@ -301,22 +240,14 @@ export function Shell({
       <main className="df-main">
         {children}
 
-        {/* 录制状态是后台发生的事，用户看不到屏幕变化。
-            没有 live region 的话，录制的启停对读屏用户完全隐形。 */}
-        <span
-          role="status"
-          aria-live="polite"
-          className="u-sr-only"
-        >
-          {recording
-            ? (paused ? "录制已暂停" : "正在录制")
-            : "未开始录制"}
-        </span>
-
         {/* 手机端：主操作在底部拇指区，导航在它下面 */}
         {phone && (
           <div className="df-phone-dock">
-            {mainAction}
+            <div className="df-mobile-recording">
+              <RecordingStatus recording={recording} paused={paused} idlePaused={!!rec?.isIdlePaused} compact />
+              {mainAction}
+              {stopAction}
+            </div>
             <nav className="df-bottom-nav" aria-label="主导航">
               {NAV.map((item) => (
                 <NavItem

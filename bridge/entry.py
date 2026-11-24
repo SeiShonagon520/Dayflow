@@ -13,9 +13,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import threading
-import time
-import urllib.request
 from pathlib import Path
 
 HOST = "127.0.0.1"
@@ -65,15 +62,9 @@ def main() -> int:
 
     import uvicorn
 
-    # 端口被上一个没退干净的实例占着时，先把它顶掉。
-    # 后台录屏工具重启频繁，留着旧进程会占着 8899 让新实例起不来。
     if _port_in_use():
-        logging.info(f"bridge: 端口 {PORT} 已被占用，尝试结束旧进程")
-        _kill_stale()
-        for _ in range(5):
-            if not _port_in_use():
-                break
-            time.sleep(0.4)
+        logging.error("Dayflow 后台端口 %s 已被占用，请先退出另一实例", PORT)
+        return 1
 
     logging.info(f"bridge: 启动 http://{HOST}:{PORT}")
     try:
@@ -98,41 +89,6 @@ def _port_in_use() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.4)
         return s.connect_ex((HOST, PORT)) == 0
-
-
-def _kill_stale() -> None:
-    """结束占着端口的旧 bridge。找不到就算了 —— 可能是别的程序。"""
-    if sys.platform != "win32":
-        return
-    try:
-        import subprocess
-
-        kwargs = {}
-        if hasattr(subprocess, "CREATE_NO_WINDOW"):
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-        out = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
-            capture_output=True, text=True, timeout=5,
-            **kwargs,
-        ).stdout
-        pids = set()
-        for line in out.splitlines():
-            if f":{PORT}" in line and "LISTENING" in line.upper():
-                parts = line.split()
-                if parts and parts[-1].isdigit():
-                    pids.add(int(parts[-1]))
-        for pid in pids:
-            if pid == os.getpid():
-                continue
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                           capture_output=True, timeout=10,
-                           **kwargs)
-            print(f"bridge: 已结束旧进程 {pid}", flush=True)
-        if pids:
-            time.sleep(0.6)
-    except Exception as e:
-        print(f"bridge: 清理旧进程失败（忽略）: {e}", flush=True)
 
 
 if __name__ == "__main__":

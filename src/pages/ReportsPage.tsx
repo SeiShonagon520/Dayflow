@@ -10,348 +10,211 @@
  * 而日报的语法空间是可预测的。
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { ApiError, api, saveTextFile } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, saveTextFile } from "@/lib/api";
 import { fullDate, prettyDate, todayStr, weekdayOf } from "@/lib/format";
 import { Button, EmptyState, SectionTitle, Spinner } from "@/components/ui";
+import { useLatest } from "@/lib/useLatest";
+import { LoadingHandoff } from "@/components/LoadingHandoff";
 import { useIsPhone } from "@/lib/useMediaQuery";
 import { FocusRing } from "@/components/FocusRing";
 import { TimelineSignature } from "@/components/TimelineSignature";
 
-export function ReportsPage() {
+export function ReportsPage({
+  initialDate, active, onOpenTimeline,
+}: {
+  initialDate: { day: string } | null;
+  active: boolean;
+  onOpenTimeline: (day: string) => void;
+}) {
+  const today = todayStr();
   const [dates, setDates] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [content, setContent] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState("");
+  const [selected, setSelected] = useState(() => initialDate?.day ?? today);
+  const [report, setReport] = useState<{ date: string; content: string; hasActivity: boolean } | null>(null);
+  const [readError, setReadError] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const [dateError, setDateError] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const [generating, setGenerating] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const selection = useLatest(selected);
+  const readRequest = useRef(0);
+  const generationLock = useRef(false);
+  const phone = useIsPhone();
 
   const loadDates = async () => {
     try {
-      const res = await api.getReportDates();
-      /* 后端字段缺失时不要让整个白屏。
-         之前直接用 dates.length，一个 undefined 就能让整个应用崩溃 ——
-         实测 320px 下切到日报页，.df-shell 直接从 DOM 消失。 */
-      const dates = Array.isArray(res?.dates) ? res.dates : [];
-      setDates(dates);
-      if (dates.length > 0) setSelected((cur) => cur ?? dates[0]);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "加载失败");
-    } finally {
-      setLoading(false);
+      setDates((await api.getReportDates()).dates ?? []);
+      setDateError(false);
+    } catch {
+      setDateError(true);
     }
   };
 
+  const loadReport = async (day: string) => {
+    const id = ++readRequest.current;
+    setReadError("");
+    try {
+      const result = await api.getReport(day);
+      if (id === readRequest.current) setReport({ ...result, date: day });
+    } catch (error) {
+      if (id === readRequest.current) {
+        setReadError(error instanceof Error ? error.message : "读取日报失败");
+      }
+    }
+  };
+
+  useEffect(() => { if (initialDate) setSelected(initialDate.day); }, [initialDate]);
+  useEffect(() => { if (active) void loadDates(); }, [active]);
   useEffect(() => {
-    loadDates();
-  }, []);
+    if (!active) return;
+    setNotice(null);
+    void loadReport(selected);
+    return () => { ++readRequest.current; };
+  }, [active, selected]);
+
+  const current = report?.date === selected ? report : null;
+  const content = current?.content ?? "";
+  const reportDays = Array.from(new Set([today, selected, ...dates])).sort().reverse();
 
   useEffect(() => {
-    if (!selected) return;
-    setError(null);
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await api.getReport(selected);
-        if (!cancelled) setContent(r.content);
-      } catch {
-        if (!cancelled) setContent("");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
+    if (!active || selected !== today || !current || current.hasActivity || readError) return;
+    const timer = window.setInterval(() => { if (!document.hidden) void loadReport(selected); }, 8000);
+    return () => window.clearInterval(timer);
+  }, [active, selected, today, current?.hasActivity, readError]);
+
+  const retry = async () => {
+    setRetrying(true);
+    await loadReport(selected);
+    setRetrying(false);
+  };
+
+  const showError = (error: unknown, fallback: string) => {
+    setNotice({ text: error instanceof Error ? error.message : fallback, error: true });
+  };
 
   const generate = async () => {
-    const date = selected ?? todayStr();
-    setGenerating(true);
-    setError(null);
-    setStatus("");
+    if (generationLock.current || !current?.hasActivity) return;
+    generationLock.current = true;
+    const day = selected;
+    setGenerating(day);
+    setNotice(null);
     try {
-      const r = await api.generateReport(date);
-      setContent(r.content);
-      setSelected(date);
-      setStatus("日报已生成");
-      await loadDates();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "生成失败");
+      const next = await api.generateReport(day);
+      if (selection.current === day) {
+        ++readRequest.current;
+        setReadError("");
+        setReport({ date: day, content: next.content, hasActivity: true });
+        setNotice({ text: "日报已生成" });
+      }
+      void loadDates();
+    } catch (error) {
+      if (selection.current === day) showError(error, "生成日报失败，请重试");
     } finally {
-      setGenerating(false);
+      generationLock.current = false;
+      setGenerating(null);
     }
   };
 
   const copy = async () => {
-    if (!content) return;
     try {
       await navigator.clipboard.writeText(content);
-      setStatus("已复制到剪贴板");
+      setNotice({ text: "已复制日报" });
     } catch {
-      setError("复制失败，请手动选择文本复制");
+      setNotice({ text: "复制失败，可以保存 Markdown 文件。", error: true });
     }
   };
 
   const exportMd = async () => {
-    if (!content || !selected) return;
-    const path = await saveTextFile(
-      `日报_${selected}.md`,
-      content,
-      "Markdown (*.md);;文本 (*.txt)"
-    );
-    setStatus(path ? "已导出" : "已取消导出");
+    setExporting(true);
+    try {
+      if (await saveTextFile(`日报_${selected}.md`, content, "md")) {
+        setNotice({ text: "日报已保存" });
+      }
+    } catch (error) {
+      showError(error, "保存日报失败，请重试");
+    } finally {
+      setExporting(false);
+    }
   };
-
-  const today = todayStr();
-  const noContent = !content;
-
-  const phone = useIsPhone();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* ── 工具栏 ─────────────────────────────────── */}
-      <div
-        className="df-toolbar"
-        data-stacked={phone ? "true" : "false"}
-      >
+      <div className="df-toolbar" data-stacked={phone ? "true" : "false"}>
         <div className="df-toolbar-row">
           <TimelineSignature />
           <h2 className="df-page-title">日报</h2>
-          <span
-            className="df-page-subtitle"
-            style={{
-              fontSize: "var(--text-sm)",
-              color: "var(--text-tertiary)",
-            }}
-          >
-            {dates.length > 0 ? `${dates.length} 篇` : "还没有生成过"}
-          </span>
           <div className="df-toolbar-spacer" />
-          {status && (
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--success)" }}>
-              {status}
-            </span>
-          )}
-          <Button
-            size="sm"
-            onClick={copy}
-            disabled={noContent}
-            title={noContent ? "还没有日报内容可复制" : "复制全文"}
-          >
-            复制
-          </Button>
-          <Button
-            size="sm"
-            onClick={exportMd}
-            disabled={noContent}
-            title={noContent ? "还没有日报内容可导出" : "导出为 Markdown"}
-          >
-            导出
-          </Button>
-          <Button
-            variant={noContent ? "secondary" : "primary"}
-            size="sm"
-            onClick={generate}
-            loading={generating}
-          >
-            {generating ? "生成中" : "生成日报"}
-          </Button>
+          {content && <>
+            <Button size="sm" onClick={copy}>复制日报</Button>
+            <Button size="sm" onClick={exportMd} loading={exporting}>保存文件</Button>
+          </>}
         </div>
       </div>
 
-      <div
-        className="df-split"
-        data-stacked={phone ? "true" : "false"}
-        style={{ flex: 1, display: "flex", minHeight: 0 }}
-      >
-        {/* ── 日期列表 ─────────────────────────────── */}
-        <div
-          className="df-split-aside"
-          style={{
-            flexShrink: 0,
-            borderRight: "1px solid var(--border-subtle)",
-            overflowY: "auto",
-            padding: "var(--space-3)",
-          }}
-        >
-          <SectionTitle
-            action={
-              <button
-                onClick={() => setSelected(today)}
-                /* 24×18 的裸文字按钮太小。伪元素扩纵向到 40px，
-                   横向也扩 —— 左右都没有紧邻控件。 */
-                className="df-hit"
-                style={{
-                  fontSize: "var(--text-xs)",
-                  color: "var(--accent-text)",
-                  position: "relative",
-                  touchAction: "manipulation",
-                }}
-              >
-                今天
-                <FocusRing />
-              </button>
-            }
-          >
-            已生成
-          </SectionTitle>
-
-          {loading ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: 20 }}>
-              <Spinner size={16} />
-            </div>
-          ) : dates.length === 0 ? (
-            <p
-              style={{
-                fontSize: "var(--text-xs)",
-                color: "var(--text-tertiary)",
-                padding: 8,
-              }}
-            >
-              还没有任何日报
-            </p>
-          ) : (
-            dates.map((d) => {
-              const active = d === selected;
-              return (
-                <button
-                  key={d}
-                  onClick={() => setSelected(d)}
-                  /* 选中态用 aria-current 表达，不只靠背景色 */
-                  aria-current={active ? "true" : undefined}
-                  className="df-hit-v"
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "var(--space-2) var(--space-3)",
-                    borderRadius: "var(--radius-md)",
-                    background: active ? "var(--accent-subtle)" : "transparent",
-                    marginBottom: 2,
-                    position: "relative",
-                    touchAction: "manipulation",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "var(--text-sm)",
-                      fontWeight: active
-                        ? "var(--weight-semibold)"
-                        : "var(--weight-normal)",
-                      color: active ? "var(--accent)" : "var(--text-primary)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    {/* 选中标记：颜色之外再给一个形状信号 */}
-                    {active && (
-                      <span aria-hidden style={{ fontSize: "var(--text-2xs)" }}>
-                        ●
-                      </span>
-                    )}
-                    {prettyDate(d)}
-                  </div>
-                  <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
-                    {weekdayOf(d)}
-                  </div>
-                  <FocusRing />
-                </button>
-              );
-            })
-          )}
+      <div className="df-split" data-stacked={phone ? "true" : "false"}
+        style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div className="df-split-aside"
+          style={{ flexShrink: 0, borderRight: "1px solid var(--border-subtle)", overflowY: "auto", padding: "var(--space-3)" }}>
+          <SectionTitle>日期</SectionTitle>
+          {reportDays.map((day) => (
+            <button key={day} onClick={() => setSelected(day)}
+              aria-current={day === selected ? "true" : undefined}
+              className="df-hit-v df-report-date">
+              <span className="df-selection-mark" aria-hidden>●</span>
+              {day === today ? "今天" : prettyDate(day)}
+              <span className="df-report-weekday">{weekdayOf(day)}</span>
+              <FocusRing />
+            </button>
+          ))}
+          {dateError && <Button size="sm" variant="ghost" onClick={loadDates}>重试读取日期</Button>}
         </div>
 
-        {/* ── 内容 ─────────────────────────────────── */}
-        <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
-          {error && !content ? (
-            <EmptyState
-              icon="⚠️"
-              title="生成失败"
-              description={error}
-              action={
-                <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                  <Button onClick={generate}>重试</Button>
-                  <Button variant="secondary" onClick={() => setError(null)}>返回</Button>
-                </div>
-              }
-            />
-          ) : !selected ? (
-            <EmptyState
-              icon="📋"
-              title="选择或生成一篇日报"
-              description={
-                "日报会汇总当天的活动记录、时间分配和专注时段。\n点击右上角「生成日报」让 AI 写一篇。"
-              }
-              action={
-                <Button variant="primary" onClick={generate}>
-                  生成今天的日报
-                </Button>
-              }
-            />
-          ) : !content ? (
-            <EmptyState
-              icon="📄"
-              title={`${prettyDate(selected)} 还没有日报`}
-              description={
-                "点击「生成日报」让 AI 汇总这一天的活动。\n如果时间轴还是空的，先开始录制。"
-              }
-              action={
-                <Button variant="primary" onClick={generate}>
-                  生成这篇日报
-                </Button>
-              }
-            />
-          ) : (
-            <>
-              {error && (
-                <div
-                  style={{
-                    maxWidth: 720,
-                    margin: "var(--space-4) auto 0",
-                    padding: "var(--space-2) var(--space-4)",
-                    background: "var(--danger-bg)",
-                    border: "1px solid var(--danger)",
-                    borderRadius: "var(--radius-md)",
-                    color: "var(--danger)",
-                    fontSize: "var(--text-xs)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <span>{error}</span>
-                  <Button size="sm" variant="ghost" onClick={() => setError(null)}>
-                    关闭
-                  </Button>
-                </div>
-              )}
-              <article
-                style={{
-                  maxWidth: 720,
-                  margin: "0 auto",
-                  padding: "var(--space-8) var(--space-6)",
-                }}
-              >
-              <div
-                style={{
-                  fontSize: "var(--text-xs)",
-                  color: "var(--text-tertiary)",
-                  marginBottom: "var(--space-5)",
-                  paddingBottom: "var(--space-3)",
-                  borderBottom: "1px solid var(--border-subtle)",
-                }}
-              >
-                {fullDate(selected)}
-              </div>
-              <Markdown source={content} />
-            </article>
-          </>
-        )}
+        <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }} key={selected}>
+          {generating && generating !== selected && (
+            <p className="df-context-note" role="status">正在生成 {prettyDate(generating)} 的日报，可以先阅读其他日报。</p>
+          )}
+          {notice && (
+            <p className="df-context-note df-feedback" role={notice.error ? "alert" : "status"}
+              data-error={notice.error || undefined}>{notice.text}</p>
+          )}
+          {readError && content && <div className="df-inline-notice" role="alert">
+            <span>刷新失败，当前仍显示已打开的日报。</span>
+            <Button size="sm" onClick={retry} loading={retrying}>重试读取</Button>
+          </div>}
+          <LoadingHandoff loading={(!current && !readError) || (retrying && !content)}
+            skeleton={<div className="df-wait"><Spinner />正在读取日报</div>}>
+            {readError && !content ? (
+              <EmptyState icon="⚠️" title="日报读取失败" description={readError}
+                action={<Button onClick={retry}>重试读取</Button>} />
+            ) : content ? (
+              <article style={{ maxWidth: 720, margin: "0 auto", padding: "var(--space-5) var(--space-6)" }}>
+                <p className="df-report-weekday">{fullDate(selected)}</p>
+                <Markdown source={content} />
+                <details className="df-details">
+                  <summary>重新生成</summary>
+                  <p>重新生成会替换这篇日报。需要保留原文时，可先保存文件。</p>
+                  <Button size="sm" onClick={generate} loading={generating === selected}
+                    disabled={!!generating && generating !== selected}>生成并替换</Button>
+                </details>
+              </article>
+            ) : current?.hasActivity ? (
+              <EmptyState icon="📄" title="这一天的日报尚未生成"
+                description="用这一天的活动记录整理一份总结。"
+                action={<Button variant="primary" loading={generating === selected}
+                  disabled={!!generating && generating !== selected} onClick={generate}>生成日报</Button>} />
+            ) : (
+              <EmptyState icon="📋" title={selected === today ? "今天还没有可汇总的活动" : "这一天没有可汇总的活动"}
+                description={selected === today ? "录制并分析后，就可以在这里生成日报。" : "可以查看这一天的时间轴，或选择其他日期。"}
+                action={<Button onClick={() => onOpenTimeline(selected)}>查看时间轴</Button>} />
+            )}
+          </LoadingHandoff>
         </div>
       </div>
     </div>
   );
 }
+
 
 // ── 极简 Markdown ────────────────────────────────────────────
 

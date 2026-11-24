@@ -9,9 +9,9 @@
  * 只动 opacity，不动布局。
  */
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { useExit } from "@/lib/motion";
 
-/** 交接时长，和 CSS 里 --dur-handoff 对齐 */
-const HANDOFF_MS = 200;
+const PLACEHOLDER_DELAY = 120;
 
 export function LoadingHandoff({
   loading,
@@ -22,35 +22,26 @@ export function LoadingHandoff({
   skeleton: ReactNode;
   children: ReactNode;
 }) {
-  const [skeletonVisible, setSkeletonVisible] = useState(true);
-  const timer = useRef<number | undefined>(undefined);
+  const [skeletonVisible, setSkeletonVisible] = useState(false);
+  const placeholder = useRef<HTMLDivElement>(null);
+  useExit(placeholder, !loading && skeletonVisible, () => setSkeletonVisible(false));
 
   useEffect(() => {
-    window.clearTimeout(timer.current);
-    if (loading) {
-      setSkeletonVisible(true);
-    } else if (skeletonVisible) {
-      // 内容已经在了，再留骨架 200ms 让它淡出
-      timer.current = window.setTimeout(
-        () => setSkeletonVisible(false), HANDOFF_MS);
-    }
-    return () => window.clearTimeout(timer.current);
-  }, [loading, skeletonVisible]);
-
-  if (loading) {
-    return <>{skeleton}</>;
-  }
+    if (!loading) return;
+    const timer = window.setTimeout(() => setSkeletonVisible(true), PLACEHOLDER_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   return (
-    <>
-      {/* 骨架还在，但已经透明 —— 它的位置不变，
-          内容淡进来盖住它。尺寸对得上所以看不出重叠。 */}
+    <div className="df-handoff" aria-busy={loading || undefined}>
       {skeletonVisible && (
-        <div className="df-skeleton-out" aria-hidden="true">
+        <div ref={placeholder} className={loading ? undefined : "df-skeleton-out"}
+          aria-hidden="true">
           {skeleton}
         </div>
       )}
-      <div className="df-content-in">{children}</div>
-    </>
+      {loading && skeletonVisible && <span className="u-sr-only" role="status">正在加载</span>}
+      {!loading && <div className="df-content-in">{children}</div>}
+    </div>
   );
 }

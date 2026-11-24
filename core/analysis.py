@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from pathlib import Path
 
+import time
 import config
+from core.chunk_files import chunk_files, protected_chunk_files
 from core.types import (
     VideoChunk, ChunkStatus,
     AnalysisBatch, BatchStatus,
@@ -339,7 +341,8 @@ class AnalysisScheduler:
         max_bytes = config.CHUNKS_MAX_SIZE_GB * 1024 ** 3
 
         try:
-            files = [f for f in chunks_dir.iterdir() if f.is_file()]
+            files = list(chunk_files(chunks_dir))
+            protected = protected_chunk_files(self.storage)
         except Exception as e:
             logger.warning(f"扫描缓存目录失败: {e}")
             return
@@ -349,14 +352,16 @@ class AnalysisScheduler:
             return
 
         # 按修改时间排序，最旧的在前
-        files.sort(key=lambda f: f.stat().st_size)
         files.sort(key=lambda f: f.stat().st_mtime)
 
         deleted_count = 0
+        in_use_since = time.time() - config.CHUNK_DURATION_SECONDS - 5
         for f in files:
             if total_size <= max_bytes:
                 break
             try:
+                if f.resolve() in protected or f.stat().st_mtime >= in_use_since:
+                    continue
                 size = f.stat().st_size
                 f.unlink()
                 total_size -= size

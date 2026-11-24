@@ -12,7 +12,9 @@
  *   · 生产力分数用「色点 + 数字 + 文字」三重表达，不只靠颜色
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useRecording } from "@/lib/useRecording";
 import { ActivityCard, ApiError, api } from "@/lib/api";
 import {
   categoryGlyph,
@@ -29,89 +31,99 @@ import {
 } from "@/lib/format";
 import { Badge, Button, EmptyState } from "@/components/ui";
 import { useIsPhone } from "@/lib/useMediaQuery";
+import { useLatest } from "@/lib/useLatest";
+import { useExit } from "@/lib/motion";
 import { Dialog } from "@/components/Dialog";
 import { LoadingHandoff } from "@/components/LoadingHandoff";
 import { FocusRing } from "@/components/FocusRing";
+
+const EMPTY_CARDS: ActivityCard[] = [];
 
 export function TimelinePage({
   date,
   onDateChange,
   onOpenReports,
-  onStartRecording,
+  active,
+  recordingControl,
 }: {
   date: string;
   onDateChange: (d: string) => void;
   onOpenReports: () => void;
-  onStartRecording: () => void;
+  active: boolean;
+  recordingControl: ReturnType<typeof useRecording>;
 }) {
-  const [cards, setCards] = useState<ActivityCard[]>([]);
+  const [allCards, setCards] = useState<ActivityCard[]>([]);
+  const [loadedDate, setLoadedDate] = useState<string | null>(null);
+  const cards = loadedDate === date ? allCards : EMPTY_CARDS;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const currentDate = useLatest(date);
   const [editing, setEditing] = useState<ActivityCard | null>(null);
-  const [toast, setToast] = useState<{ msg: string; card: ActivityCard } | null>(
-    null
-  );
+  const [toast, setToast] = useState<{ card: ActivityCard; date: string }[]>([]);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [undoFailed, setUndoFailed] = useState(false);
   const toastTimer = useRef<number | null>(null);
-  /* 退场中：toast 已清空但 DOM 还留着播动画 */
   const [toastClosing, setToastClosing] = useState(false);
-  const exitTimer = useRef<number | null>(null);
-
-  /** 撤销窗口。必须和 CSS 里的 --undo-window 一致，
-      否则倒计时条走完、条子还在（或反过来）。 */
-  const UNDO_MS = 6000;
-
-  /** 退场时长，和 CSS 里的 --dur-exit 一致。改一个要改两个。 */
-  const EXIT_MS = 150;
-
-  /** 先播退场，再卸载。真正的消失推迟 150ms。 */
-  const dismissToast = () => {
-    setToastClosing(true);
-    if (exitTimer.current !== null) window.clearTimeout(exitTimer.current);
-    exitTimer.current = window.setTimeout(
-      () => setToastClosing(false), EXIT_MS);
-  };
-
-  /* 退场中：editing 还在，但对话框在关闭。 */
+  const toastElement = useRef<HTMLDivElement>(null);
   const [editClosing, setEditClosing] = useState(false);
-  const editTimer = useRef<number | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const request = useRef(0);
+  const mutating = useRef(0);
+  const UNDO_MS = 10000;
 
-  /** 请求关闭：先播退场，EXIT_MS 后才真正卸载。 */
-  const closeEdit = () => {
-    setEditClosing(true);
-    if (editTimer.current !== null) window.clearTimeout(editTimer.current);
-    editTimer.current = window.setTimeout(() => {
-      setEditing(null);
-      setEditClosing(false);
-    }, EXIT_MS);
-  };
+  useExit(toastElement, toastClosing, () => {
+    setToast([]);
+    setToastClosing(false);
+  });
+
+  const closeEdit = () => setEditClosing(true);
 
   useEffect(() => () => {
+    request.current++;
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    if (exitTimer.current !== null) window.clearTimeout(exitTimer.current);
-    if (editTimer.current !== null) window.clearTimeout(editTimer.current);
   }, []);
 
-  const load = async (d: string) => {
-    setLoading(true);
-    setError(null);
+  const load = async (d: string, quiet = false) => {
+    if (d !== currentDate.current || (quiet && mutating.current)) return;
+    const id = ++request.current;
+    if (!quiet) setLoading(true);
+    if (!quiet) setError(null);
     try {
       const res = await api.getCards(d);
       /* 后端少返回一个字段就整页崩溃没有意义。
          日报页已经栽过一次同样的跟头。 */
-      setCards(Array.isArray(res?.cards) ? res.cards : []);
+      if (id !== request.current || (quiet && mutating.current)) return;
+      setError(null);
+      const next = Array.isArray(res?.cards) ? res.cards : [];
+      setCards((previous) => quiet && JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+      setFilter((current) => current && !next.some((card) => (card.category || "其他") === current) ? null : current);
     } catch (e) {
+      if (id !== request.current || quiet) return;
       setError(e instanceof ApiError ? e.message : "加载失败");
       setCards([]);
     } finally {
-      setLoading(false);
+      if (!quiet && id === request.current) {
+        setLoadedDate(d);
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     load(date);
+    return () => { request.current++; };
   }, [date]);
+
+  useEffect(() => {
+    if (!active || loadedDate !== date || date !== todayStr()) return;
+    const timer = window.setInterval(() => { if (!document.hidden) void load(date, true); }, 8000);
+    return () => window.clearInterval(timer);
+  }, [active, loadedDate, date]);
 
   // 分类计数
   const counts = useMemo(() => {
@@ -123,8 +135,8 @@ export function TimelinePage({
   const visible = useMemo(() => {
     let list = cards;
     if (filter) list = list.filter((c) => (c.category || "其他") === filter);
-    if (query.trim()) {
-      const q = query.trim().toLowerCase();
+    if (deferredQuery.trim()) {
+      const q = deferredQuery.trim().toLowerCase();
       list = list.filter(
         (c) =>
           c.title.toLowerCase().includes(q) ||
@@ -135,62 +147,78 @@ export function TimelinePage({
     return [...list].sort((a, b) =>
       (a.startTime ?? "").localeCompare(b.startTime ?? "")
     );
-  }, [cards, filter, query]);
+  }, [cards, filter, deferredQuery]);
 
   const totals = useMemo(() => {
     const mins = cards.reduce((s, c) => s + c.durationMinutes, 0);
     return { count: cards.length, minutes: mins };
   }, [cards]);
 
-  const showToast = (msg: string, card: ActivityCard) => {
-    setToast({ msg, card });
-    setToastClosing(false);
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    if (exitTimer.current !== null) window.clearTimeout(exitTimer.current);
-    // 6 秒后走退场，不直接消失
-    toastTimer.current = window.setTimeout(() => {
-      setToast(null);
-      dismissToast();
-    }, UNDO_MS);
-  };
-
   const handleDelete = async (card: ActivityCard) => {
-    const snapshot = cards;
+    setOperationError(null);
+    mutating.current++;
     setCards((cs) => cs.filter((c) => c.id !== card.id));
     try {
       await api.deleteCard(card.id);
-      showToast(`已删除「${truncate(card.title, 18)}」`, card);
+      setToast((items) => [...items, { card, date }]);
+      setToastClosing(false);
+      setUndoFailed(false);
+      if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+      toastTimer.current = window.setTimeout(() => setToastClosing(true), UNDO_MS);
     } catch (e) {
-      setCards(snapshot); // 删失败就恢复，不能让界面和数据不一致
-      setError(e instanceof ApiError ? e.message : "删除失败");
+      if (date !== currentDate.current) return;
+      setCards((current) => current.some((item) => item.id === card.id)
+        ? current : [...current, card]);
+      setOperationError(e instanceof ApiError ? e.message : "删除失败，活动已恢复");
+    } finally {
+      mutating.current--;
     }
   };
 
   const handleUndo = async () => {
-    if (!toast) return;
-    const card = toast.card;
-    /* 撤销后条子立刻没用处了 —— 直接卸载，不播退场。
-       慢一秒消失只会让人以为撤销失败了。 */
-    setToast(null);
-    setToastClosing(false);
+    if (!toast.length || undoBusy) return;
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    if (exitTimer.current !== null) window.clearTimeout(exitTimer.current);
+    setUndoBusy(true);
+    setUndoFailed(false);
+    setToastClosing(false);
+    mutating.current++;
+    const failed = new Set<number>();
     try {
-      await api.restoreCard(card);
-      setCards((cs) => [...cs, card]);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "恢复失败，刷新后该记录会消失");
+      for (const { card, date: deletedOn } of toast) {
+        try {
+          await api.restoreCard(card);
+          if (deletedOn === currentDate.current) {
+            setCards((items) => items.some((item) => item.id === card.id) ? items : [...items, card]);
+          }
+        } catch {
+          failed.add(card.id);
+        }
+      }
+      const attempted = new Set(toast.map(({ card }) => card.id));
+      setToast((items) => items.filter(({ card }) => !attempted.has(card.id) || failed.has(card.id)));
+      setUndoFailed(failed.size > 0);
+      if (failed.size && toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+    } finally {
+      mutating.current--;
+      setUndoBusy(false);
     }
   };
 
   const handleSave = async (card: ActivityCard) => {
-    setCards((cs) => cs.map((c) => (c.id === card.id ? { ...c, ...card } : c)));
-    closeEdit();
+    setEditError("");
+    setEditSaving(true);
+    mutating.current++;
     try {
       await api.updateCard(card.id, card);
+      if (date === currentDate.current) {
+        setCards((items) => items.map((item) => item.id === card.id ? { ...item, ...card } : item));
+      }
+      closeEdit();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "保存失败");
-      load(date);
+      setEditError(e instanceof ApiError ? e.message : "保存失败，请重试");
+    } finally {
+      mutating.current--;
+      setEditSaving(false);
     }
   };
 
@@ -215,7 +243,7 @@ export function TimelinePage({
               ‹
             </IconButton>
             <div className="df-datelabel">
-              <div style={{
+              <div key={date} className="df-value-change" style={{
                 fontSize: "var(--text-md)",
                 fontWeight: "var(--weight-semibold)",
               }}>
@@ -243,7 +271,7 @@ export function TimelinePage({
             </IconButton>
           </div>
 
-          {!phone && (
+          {!isToday(date) && (
             <Button size="sm" variant="ghost" onClick={() => onDateChange(todayStr())}>
               回到今天
             </Button>
@@ -318,10 +346,17 @@ export function TimelinePage({
         </div>
       )}
 
+      {operationError && (
+        <div className="df-inline-notice df-feedback" role="alert">
+          <span>{operationError}</span>
+          <Button size="sm" variant="ghost" onClick={() => setOperationError(null)}>关闭</Button>
+        </div>
+      )}
+
       {/* ── 列表 ───────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: "auto", position: "relative" }}>
         <LoadingHandoff
-          loading={loading}
+          loading={loading || loadedDate !== date}
           skeleton={
             /* 骨架屏而不是一个孤立的小转圈。
                转圈只说「在加载」，骨架屏顺带把版式先摆出来 ——
@@ -366,23 +401,23 @@ export function TimelinePage({
           />
         ) : visible.length === 0 ? (
           <EmptyStateForTimeline
-            hasAny={cards.length > 0}
+            isToday={isToday(date)}
             isFiltered={!!filter || !!query}
-            onStart={onStartRecording}
+            recordingControl={recordingControl}
             onClearFilter={() => {
               setFilter(null);
               setQuery("");
             }}
           />
         ) : (
-          <div className="df-row-list">
-            {visible.map((card, i) => (
+          <div className="df-row-list" data-long={visible.length > 100 || undefined}>
+            {visible.map((card) => (
               <ActivityRow
                 key={card.id}
                 card={card}
-                index={i}
                 onEdit={() => {
                   setEditClosing(false);
+                  setEditError("");
                   setEditing(card);
                 }}
                 onDelete={() => handleDelete(card)}
@@ -393,37 +428,28 @@ export function TimelinePage({
         </LoadingHandoff>
       </div>
 
-      {/* 对话框：editing 保留到退场结束。
-          之前 {editing && <EditDialog/>} 在 closeEdit 里立刻把
-          editing 置 null，Dialog 整个被卸载，退场动画没机会播 ——
-          实测采样只有 gone/gone/gone。改成用 open 状态控制，
-          组件本身活到退场结束。 */}
       {editing && (
         <EditDialog
           card={editing}
           open={!editClosing}
-          onClose={closeEdit}
+          onClose={() => { if (!editSaving) closeEdit(); }}
+          saving={editSaving}
+          error={editError}
+          onExited={() => setEditing(null)}
           onSave={handleSave}
         />
       )}
 
-      {/* 撤销条：6 秒后自动消失。
-          之前是 setToast(null) 直接卸载，条子凭空蒸发 ——
-          用户刚看到「已删除」，撤销机会就闪了一下没了。
-          退场动画 + 延后卸载，让它体面地走。
-
-          底部那条线是倒计时。用户看不到 6 秒这个数，
-          不知道还剩多久，只能盯着条子消失 ——
-          有条线才知道该不该现在按撤销。 */}
-      {(toast || toastClosing) && (
+      {toast.length > 0 && createPortal(
         <div
+          ref={toastElement}
+          data-closing={toastClosing || undefined}
           role="status"
           aria-live="polite"
           style={{
             position: "fixed",
-            bottom: "var(--space-6)",
             left: "50%",
-            transform: "translateX(-50%)",
+            translate: "-50% 0",
             display: "flex",
             alignItems: "center",
             gap: "var(--space-4)",
@@ -436,33 +462,29 @@ export function TimelinePage({
             zIndex: "var(--z-toast)",
             overflow: "hidden",
           }}
-          className={toastClosing ? "df-fade-out" : "df-pop-in"}
+          className="df-toast df-undo-toast"
         >
           <span style={{ fontSize: "var(--text-sm)" }}>
-            {toast ? toast.msg : ""}
+            {undoFailed ? "部分活动未能恢复，可以重试" : toast.length === 1
+              ? `已删除「${truncate(toast[0].card.title, 18)}」`
+              : `已删除 ${toast.length} 条活动`}
           </span>
-          {!toastClosing && (
-            <Button size="sm" variant="ghost" onClick={handleUndo}>
-              撤销
-            </Button>
-          )}
-          {!toastClosing && (
-            /* 纯装饰：role=status 已经播报了「已删除」，
-               进度条每帧都在变，播报它只会刷屏。
-               所以 aria-hidden，不参与可访问性树。 */
-            <span
-              aria-hidden
-              className="df-undo-timer"
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: 2,
-              }}
-            />
-          )}
-        </div>
+          <Button size="sm" variant="ghost" onClick={handleUndo} loading={undoBusy} disabled={toastClosing}>
+            撤销
+          </Button>
+          {!undoBusy && !undoFailed && <span
+            key={toast[toast.length - 1]?.card.id}
+            aria-hidden
+            className="df-undo-timer"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 2,
+            }}
+          />}
+        </div>, document.body
       )}
     </div>
   );
@@ -472,29 +494,18 @@ export function TimelinePage({
 
 function ActivityRow({
   card,
-  index,
   onEdit,
   onDelete,
 }: {
   card: ActivityCard;
-  index: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const score = card.productivityScore;
   const apps = card.appSites.slice(0, 3);
 
   return (
-    <div
-      className="df-row"
-      style={{
-        animation: "df-fade-up var(--dur-space) var(--ease-out) backwards",
-        animationDelay: `${Math.min(index, 8) * 18}ms`,
-      }}
-      onMouseEnter={() => setMenuOpen(true)}
-      onMouseLeave={() => setMenuOpen(false)}
-    >
+    <div className="df-row">
       {/* 时间列：固定宽度，让所有条目的时间戳垂直对齐 */}
       <div className="df-row-time">
         <div style={{ color: "var(--text-secondary)" }}>
@@ -636,17 +647,12 @@ function ActivityRow({
           否则编辑和删除在手机上等于不存在。
 
           窄屏下图标替代文字：两个 28px 的文字按钮会占掉近一半宽度。 */}
-      <div
-        className="df-hover-only df-row-actions"
-        data-revealed={menuOpen ? "true" : "false"}
-        // 键盘用户即使没悬停也要能看到
-        onFocus={() => setMenuOpen(true)}
-      >
-        <Button size="sm" variant="ghost" onClick={onEdit} title="编辑">
+      <div className="df-hover-only df-row-actions">
+        <Button size="sm" variant="ghost" onClick={onEdit} title="编辑" aria-label="编辑">
           <span className="df-actions-label">编辑</span>
           <span className="df-actions-icon" aria-hidden>✎</span>
         </Button>
-        <Button size="sm" variant="ghost" onClick={onDelete} title="删除">
+        <Button size="sm" variant="ghost" onClick={onDelete} title="删除" aria-label="删除">
           <span className="df-actions-label">删除</span>
           <span className="df-actions-icon" aria-hidden>✕</span>
         </Button>
@@ -836,43 +842,35 @@ function SearchBox({
 }
 
 function EmptyStateForTimeline({
-  hasAny,
-  isFiltered,
-  onStart,
-  onClearFilter,
+  isToday, isFiltered, recordingControl, onClearFilter,
 }: {
-  hasAny: boolean;
+  isToday: boolean;
   isFiltered: boolean;
-  onStart: () => void;
+  recordingControl: ReturnType<typeof useRecording>;
   onClearFilter: () => void;
 }) {
+  const { state, pending, run } = recordingControl;
   if (isFiltered) {
-    return (
-      <EmptyState
-        icon="⌕"
-        title="没有匹配的活动"
-        description="换个关键词，或清除筛选条件查看全部记录。"
-        action={<Button onClick={onClearFilter}>清除筛选</Button>}
-      />
-    );
+    return <EmptyState icon="⌕" title="没有匹配的活动"
+      description="换个关键词，或查看全部记录。"
+      action={<Button onClick={onClearFilter}>清除筛选</Button>} />;
   }
-  if (hasAny) {
-    return (
-      <EmptyState
-        icon="📭"
-        title="这一天没有活动记录"
-        description="当天录了屏，但没有分析出活动。\n可能是录制时长太短，或分析还没完成。"
-      />
-    );
+  if (!isToday) {
+    return <EmptyState icon="📭" title="这一天没有活动记录"
+      description="可以在上方选另一天，或回到今天。" />;
   }
-  return (
-    <EmptyState
-      icon="⏱"
-      title="今天还没有活动记录"
-      description="开始录制后，Dayflow 会每隔几分钟分析一次屏幕活动，自动整理成时间轴。"
-      action={<Button variant="primary" onClick={onStart}>开始录制</Button>}
-    />
-  );
+  if (state?.isRecording) {
+    const paused = state.isPaused || state.isIdlePaused;
+    return <EmptyState icon="⏱" title={paused ? "录制已暂停" : "正在整理今天的活动"}
+      description={paused ? "继续录制后，新的活动会陆续出现。" : "分析完成后，记录会自动显示在这里。"}
+      action={paused && <Button variant="primary" loading={pending === "resume"}
+        onClick={() => run("resume")}>继续录制</Button>} />;
+  }
+  return <EmptyState icon="⏱" title="今天还没有活动记录"
+    description={state?.needsSetup ? "连接分析模型后，就可以开始自动整理活动。" : "录制开始后，活动会自动整理在这里。"}
+    action={<Button variant="primary" loading={pending === "start"} onClick={() => run("start")}>
+      {state?.needsSetup ? "连接分析模型" : "开始录制"}
+    </Button>} />;
 }
 
 // ── 编辑对话框 ────────────────────────────────────────────
@@ -881,12 +879,18 @@ function EditDialog({
   card,
   open,
   onClose,
+  onExited,
   onSave,
+  saving,
+  error,
 }: {
   card: ActivityCard;
   open: boolean;
   onClose: () => void;
+  onExited: () => void;
   onSave: (c: ActivityCard) => void;
+  saving: boolean;
+  error: string;
 }) {
   const [title, setTitle] = useState(card.title);
   const [summary, setSummary] = useState(card.summary);
@@ -897,8 +901,9 @@ function EditDialog({
      两个 handler 都会跑，onClose 会被调两次。 */
 
   return (
-    <Dialog open={open} onClose={onClose} labelledBy="editDialogTitle">
+    <Dialog open={open} onClose={onClose} onExited={onExited} labelledBy="editDialogTitle">
         <h3 id="editDialogTitle">编辑活动</h3>
+        <fieldset disabled={saving} className="df-edit-fields">
 
         <label style={labelStyle}>
           标题
@@ -947,6 +952,8 @@ function EditDialog({
           />
         </label>
 
+        </fieldset>
+        {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
         <div
           style={{
             display: "flex",
@@ -954,9 +961,9 @@ function EditDialog({
             gap: "var(--space-2)",
           }}
         >
-          <Button onClick={onClose}>取消</Button>
+          <Button onClick={onClose} disabled={saving}>取消</Button>
           <Button
-            variant="primary"
+            variant="primary" loading={saving} disabled={!title.trim()}
             onClick={() =>
               onSave({ ...card, title, summary, category, productivityScore: score })
             }

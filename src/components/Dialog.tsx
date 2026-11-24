@@ -15,6 +15,7 @@
  */
 import { ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useExit } from "@/lib/motion";
 import { useLatest } from "@/lib/useLatest";
 
 const FOCUSABLE = [
@@ -35,32 +36,26 @@ function focusablesIn(root: HTMLElement | null): HTMLElement[] {
 export function Dialog({
   open,
   onClose,
+  onExited,
   labelledBy,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  onExited: () => void;
   labelledBy?: string;
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   /** 打开时记住焦点在哪，关掉还回去 */
   const restoreTo = useRef<HTMLElement | null>(null);
-  /* 退场状态由外部驱动 —— 父组件在退场结束后才卸载本组件。
-     自己管一个 150ms 计时器会和父组件的那个抢跑：
-     实测遮罩在 12ms 就被移除，退场动画一帧都没播。
-     所以这里不计时，只根据 open 判断该播入场还是退场。 */
+  const overlay = useRef<HTMLDivElement>(null);
   const closing = !open;
-  /* 回调存进 ref：它每次 render 都换身份，但它变了不该导致
-     重新抓一遍「打开时焦点在哪」+ 重新 focus 第一个字段。
-     之前这个 effect 依赖 [open, onClose]，父组件任何一次重渲染
-     （比如删除后那条 6 秒 toast 计时器到期）都会把它重跑一遍 ——
-     实测：焦点从正在输入的 textarea 被抢回第一个 input。 */
+  const closingRef = useLatest(closing);
+  useExit(overlay, closing, onExited);
   const onCloseRef = useLatest(onClose);
 
   useEffect(() => {
-    if (!open) return;
-
     restoreTo.current = document.activeElement as HTMLElement | null;
 
     // 背景 inert：不能 Tab 进去，也不能被点。
@@ -72,6 +67,11 @@ export function Dialog({
     (items[0] ?? panel.current)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
+      if (closingRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -111,17 +111,14 @@ export function Dialog({
       // 焦点还回去 —— 停在 body 上等于把用户丢回起点
       restoreTo.current?.focus?.();
     };
-    /* 只依赖 open。加上 onClose 会让父组件每次重渲染都重跑这个
-       effect —— 实测焦点会从正在输入的 textarea 跳回第一个 input。
-       最新的那个 onClose 通过 onCloseRef 拿，不需要靠依赖触发。 */
-  }, [open]);
+  }, [closingRef, onCloseRef]);
 
-  /* 退场期间组件保持挂载，由父组件在退场结束后卸载。
-     提前 return null 就等于没有退场。 */
   return createPortal(
     <div
-      className={`df-overlay ${closing ? "df-overlay-out" : ""}`}
-      onClick={onClose}
+      ref={overlay}
+      className="df-overlay"
+      data-closing={closing || undefined}
+      onClick={closing ? undefined : onClose}
       style={{
         position: "fixed",
         inset: 0,
@@ -142,9 +139,7 @@ export function Dialog({
            焦点会掉回 body，键盘用户直接失联。 */
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        /* 入场和退场是两组互斥的 class ——
-           同时挂会互相覆盖，退场根本播不出来。 */
-        className={`df-dialog ${closing ? "df-fade-out" : "df-pop-in"}`}
+        className="df-dialog"
         style={{
           background: "var(--bg-raised)",
           border: "1px solid var(--border-default)",

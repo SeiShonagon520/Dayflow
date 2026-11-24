@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 # 版本信息
-VERSION = "1.6.0"
+VERSION = "1.7.1"
 GITHUB_REPO = "SeiShonagon520/Dayflow"
 
 # API 配置 (OpenAI 兼容格式)

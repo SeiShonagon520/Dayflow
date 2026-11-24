@@ -12,6 +12,8 @@
 use std::process::{Child, Command};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::io::Read;
+use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::HANDLE;
@@ -30,6 +32,7 @@ use tauri::{
 /// 父进程一死，整棵进程树跟着走。
 struct BridgeProcess {
     child: Mutex<Option<Child>>,
+    token: String,
     #[allow(dead_code)]
     job: JobHandle,
 }
@@ -118,7 +121,7 @@ impl JobHandle {
 const BRIDGE_PORT: u16 = 8899;
 
 #[tauri::command]
-fn save_text_file(app: AppHandle, default_name: String, content: String, ext: String) -> Option<String> {
+async fn save_text_file(app: AppHandle, default_name: String, content: String, ext: String) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
 
     let path = app
@@ -137,6 +140,58 @@ fn save_text_file(app: AppHandle, default_name: String, content: String, ext: St
     }
 }
 
+#[tauri::command]
+fn bridge_token(state: tauri::State<'_, BridgeProcess>) -> String {
+    state.token.clone()
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) {
+    show_window(&app);
+}
+
+#[tauri::command]
+async fn select_chunks_directory(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().file().blocking_pick_folder().map(|path| path.to_string())
+}
+
+fn local_data() -> Result<PathBuf, String> {
+    std::env::var_os("LOCALAPPDATA").map(|directory| PathBuf::from(directory).join("Dayflow"))
+        .ok_or_else(|| "无法定位 Dayflow 数据目录".to_owned())
+}
+
+#[tauri::command]
+fn open_log_directory() -> Result<(), String> {
+    Command::new("explorer.exe").arg(local_data()?).spawn()
+        .map(|_| ()).map_err(|_| "无法打开日志目录".to_owned())
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle, digest: String) -> Result<(), String> {
+    let installer = local_data()?.join("updates").join("setup.exe");
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("安装包校验信息无效".to_owned());
+    }
+    let mut file = std::fs::File::open(&installer).map_err(|_| "找不到已下载的安装包".to_owned())?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|_| "无法读取安装包".to_owned())?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    if format!("{:x}", hash.finalize()) != digest {
+        return Err("安装包校验失败，请重新下载".to_owned());
+    }
+    drop(file);
+    Command::new(installer).spawn().map_err(|_| "无法启动安装程序".to_owned())?;
+    app.exit(0);
+    Ok(())
+}
+
 /// 查找随包携带的 Python bridge。Tauri externalBin 在不同安装布局
 /// 下可能放在主程序旁边或 resources/ 子目录里。
 fn bundled_bridge_path(exe_dir: &Path) -> Option<PathBuf> {
@@ -146,24 +201,6 @@ fn bundled_bridge_path(exe_dir: &Path) -> Option<PathBuf> {
     ]
     .into_iter()
     .find(|path| path.is_file())
-}
-
-/// 返回随包 bridge；开发时则用系统 Python。
-#[allow(dead_code)]
-fn python_command() -> Command {
-    let exe = std::env::current_exe().unwrap_or_default();
-    let dir = exe.parent().unwrap_or(std::path::Path::new("."));
-
-    if let Some(bundled) = bundled_bridge_path(dir) {
-        let mut c = Command::new(bundled);
-        c.current_dir(exe.parent().unwrap_or(dir));
-        return c;
-    }
-
-    // 开发布局：直接用 PATH 里的 python
-    let mut c = Command::new("python");
-    c.current_dir(dir);
-    c
 }
 
 /// 开发模式下寻找项目根目录（包含 bridge/entry.py 的目录）
@@ -182,7 +219,7 @@ fn find_project_root(start_dir: &Path) -> PathBuf {
 
 /// 启动 bridge，失败时返回错误信息而不是 panic —— 用户应该看到
 /// 「后台起不来」，而不是应用直接闪退。
-fn spawn_bridge() -> Result<Child, String> {
+fn spawn_bridge(token: &str, minimized: bool) -> Result<Child, String> {
     let exe_dir = exe_dir();
     let bundled = bundled_bridge_path(&exe_dir);
 
@@ -206,12 +243,17 @@ fn spawn_bridge() -> Result<Child, String> {
     }
 
     cmd.current_dir(&work_dir)
+        .env("DAYFLOW_BRIDGE_TOKEN", token)
+        .env("DAYFLOW_START_MINIMIZED", if minimized { "1" } else { "0" })
         .env("DAYFLOW_ROOT", &project_root)
         .env("PYTHONPATH", &project_root)
         // bridge 日志混进 GUI 进程会污染 stdout，单独收走。
         // 需要排查时把 null 换成 Stdio::inherit()。
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    if bundled.is_some() && !cfg!(debug_assertions) {
+        cmd.env("DAYFLOW_HOST_EXE", std::env::current_exe().map_err(|e| e.to_string())?);
+    }
 
     cmd.spawn()
         .map_err(|e| format!("无法启动后台服务（{}）: {}", project_root, e))
@@ -228,15 +270,19 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![save_text_file])
+        .invoke_handler(tauri::generate_handler![
+            bridge_token, show_main_window, save_text_file, select_chunks_directory, open_log_directory, install_update
+        ])
         .setup(|app| {
             // ── 启动 Python bridge ──────────────────────────
             let job = JobHandle::new();
             let state = BridgeProcess {
                 child: Mutex::new(None),
+                token: uuid::Uuid::new_v4().to_string(),
                 job,
             };
-            match spawn_bridge() {
+            let minimized = std::env::args().skip(1).any(|arg| arg == "--minimized");
+            match spawn_bridge(&state.token, minimized) {
                 Ok(child) => {
                     // 把 sidecar 挂进 job object：应用退出时整棵进程树跟着走，
                     // 不会留下占着 8899 的孤儿进程
@@ -254,12 +300,13 @@ fn main() {
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let start = MenuItem::with_id(app, "start", "开始录制", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "停止录制", true, None::<&str>)?;
+            let pause = MenuItem::with_id(app, "pause", "暂停 / 继续录制", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
 
             // 分隔符要先 bind 成变量：直接内联在数组里会因为
             // 借用生命周期对不上而编译失败。
-            let menu = Menu::with_items(app, &[&show, &start, &stop, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &start, &pause, &stop, &sep, &quit])?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().unwrap())
@@ -269,6 +316,7 @@ fn main() {
                     "show" => show_window(app),
                     "start" => emit_to_frontend(app, "tray", "start"),
                     "stop" => emit_to_frontend(app, "tray", "stop"),
+                    "pause" => emit_to_frontend(app, "tray", "pause"),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -283,6 +331,9 @@ fn main() {
             // 关闭按钮 → 最小化到托盘，而不是退出。
             // 录屏工具关掉就白开了，用户点 X 大概率是想让它后台继续跑。
             if let Some(win) = app.get_webview_window("main") {
+                if !minimized {
+                    win.show()?;
+                }
                 let handle = app.handle().clone();
                 win.on_window_event(move |e| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = e {

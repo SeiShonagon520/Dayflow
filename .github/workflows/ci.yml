@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'bridge/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
             ${{ runner.os }}-pip-
@@ -35,10 +35,35 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt -r bridge/requirements.txt
 
       - name: Run tests
-        env:
-          QT_QPA_PLATFORM: offscreen
         run: |
-          pytest -q
+          python -m pytest -q
+
+  installer:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install build dependencies
+        run: |
+          python -m pip install -r requirements.txt -r bridge/requirements.txt pyinstaller
+          npm ci
+      - name: Build Windows installer
+        run: |
+          python bridge/build_bridge.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run tauri:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dayflow-Windows-Installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

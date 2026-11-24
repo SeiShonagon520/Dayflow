@@ -95,301 +95,38 @@ Dayflow is designed around **local recording + cloud analysis + local storage**.
 | ⏸️ **Pause recording** | Pause when handling sensitive content |
 | 🎨 **Theme switching** | Dark / light themes with saved preferences |
 
-### 🆕 Recent highlights
+## v1.7.1
 
-#### v1.6.0 (2026-10)
+Dayflow for Windows uses Tauri and React. The installer continues to use `%LOCALAPPDATA%\Dayflow\dayflow.db`, so existing activity, reports, and settings carry over. You can merge legacy JSON backups from Settings → Data import and export.
 
-- **Major Architectural Overhaul**: Completely migrated from desktop Qt to **Tauri 2.0 (Rust) + React 18 + Vite**, delivering instant startup, fluid animations, and significantly lighter resource footprint.
-- **Modern Responsive UI**: Three-pane responsive layout, rich activity timeline cards, smooth interactive charts, and system dark theme support.
-- **Kernel-level Process Management (Windows Job Object)**: Embedded Python bridge process tree is bound to Windows Job Object, eliminating console windows and orphan processes.
-- **Offline Resilient Report Generation**: When external AI APIs time out or fail (e.g. invalid/expired key), automatic local aggregation synthesizes a structured Markdown daily report in milliseconds.
-- **Interactive Statistics Dashboard**: 7-day and 30-day metrics, productivity trend chart, category donut breakdown, daily activity heatmap, and hourly distribution graph.
-- **Multi-Monitor & Idle Pause**: Panoramic multi-screen capture and automatic pause/resume based on keyboard and mouse idle detection.
-- **Privacy Filtering**: Window title & process blacklist filtering, plus storage quota limits with automatic cleanup.
+Use the main window or system tray to start, pause, resume, or stop recording. Settings covers display selection, idle detection, chunk storage, scheduled and test email, HTML and CSV export, JSON backups, diagnostics, sign-in recording, and in-app installer updates.
 
-- Statistics page redesign with metric cards, donut chart, trend chart, heatmap, and week comparison
-- Activity cards can now be edited or deleted
-- Better visual polish across the UI
+### Install
 
-#### v1.5.0 (2025-12)
+Download the latest `Dayflow_<version>_x64-setup.exe` from [GitHub Releases](https://github.com/SeiShonagon520/Dayflow/releases). Dayflow supports Windows 10/11 x64. Configure a vision model endpoint on the first run.
 
-- Windows API window tracking for more accurate recognition
-- UI refresh: efficiency indicator bar, deep work badge, live recording duration, and more
-- Improved prompting and data processing logic
+### Develop and build
 
----
+Install Node.js 22, stable Rust (MSVC), Visual Studio C++ Build Tools, the Windows SDK, and Python 3.10 or 3.11.
 
-## 🖥️ Screenshots
-
-### Timeline page
-
-![Dayflow Timeline](assets/Dayflow_index.png)
-
-*Daily activity cards with time range, app, summary, and productivity score.*
-
-### Statistics page
-
-![Dayflow Statistics](assets/Dayflow_Statistics.png)
-
-*Dashboard-style overview with key metrics, distribution charts, heatmap, and comparisons.*
-
-### Web dashboard
-
-#### Date selection
-
-![Dashboard Date Selection](assets/Dayflow_Dashboard_Dialog.png)
-
-#### HTML report
-
-![Web Dashboard](assets/Dayflow_Dashboard_Report.png)
-
-*Exported HTML dashboard that can be opened in a browser and shared directly.*
-
-### Email reports
-
-#### Settings
-
-![Email Settings](assets/Dayflow_Email_Settings.png)
-
-#### Examples
-
-<div align="center">
-<img src="assets/Dayflow_Email_Report_1.png" width="45%" alt="Report Example 1"/>
-<img src="assets/Dayflow_Email_Report_2.png" width="45%" alt="Report Example 2"/>
-</div>
-
-#### Deep analysis
-
-![Deep Analysis Report](assets/Dayflow_Email_DeepAnalysis.png)
-
-### Auto update / auto start
-
-![Auto Update](assets/Dayflow_AutoUpdate.png)
-
-![Auto Start](assets/Dayflow_AutoStart.png)
-
----
-
-## ✅ README checklist covered in this revision
-
-- [x] Removed garbled text, typos, and broken directory names
-- [x] Reframed the opening so the project value is clearer
-- [x] Moved privacy information near the top
-- [x] Reduced feature overload and tightened the structure
-- [x] Added a roadmap section
-- [x] Added known limitations
-- [x] Clarified the current license choice
-- [x] Aligned the English README with the Chinese version
-- [x] Added a minimal Windows CI workflow
-
----
-
-## 🚀 Quick start
-
-### Requirements
-
-- Windows 10 / 11 (64-bit)
-- Python 3.10+
-- [FFmpeg](https://ffmpeg.org/download.html) added to PATH
-
-### Installation
-
-```bash
-git clone https://github.com/SeiShonagon520/Dayflow.git
-cd Dayflow
-
-conda create -n dayflow python=3.11 -y
-conda activate dayflow
-
-pip install -r requirements.txt
-python main.py
+```powershell
+python -m pip install -r requirements.txt -r bridge/requirements.txt pyinstaller
+npm ci
+.\start.bat
 ```
 
-### Build as EXE (optional)
+Run `python -m pytest -q` for tests and `npm run build` to check the production frontend. Run `.\build.bat` to rebuild the Python sidecar and the Tauri NSIS installer.
 
-```bash
-pip install pyinstaller
-python build.py
-```
+The installer is written to `src-tauri\target\release\bundle\nsis\`. Attach the matching `Dayflow_<version>_x64-setup.exe` to the GitHub Release. Windows CI builds the same installer after the test matrix passes.
 
-Or simply double-click `build.bat`.
-
-### Download prebuilt releases
-
-If you just want to use Dayflow without setting up Python locally:
-
-1. Open [Releases](https://github.com/SeiShonagon520/Dayflow/releases)
-2. Download the latest installer or archive
-3. Extract it and run `Dayflow.exe`
-
-> 💡 For the first run, configure the API first and then start recording.
-
----
-
-## 📖 Basic usage
-
-### 1. Configure your API
-
-Go to **Settings** and fill in:
-- **API URL**: any OpenAI-compatible endpoint
-- **API Key**
-- **Model name**: a vision-capable model
-
-Then click **Test Connection** and **Save Config**.
-
-### 2. Start recording
-
-- Click **Start Recording**
-- The app records at 1 FPS in the background
-- A video chunk is generated every 60 seconds
-- Keyframes are sent to your configured model service for analysis
-
-### 3. Review your timeline
-
-Each card shows a time range, category, app, summary, and productivity score.
-
-### 4. Optional features
-
-- **Email reports**: scheduled summaries and deeper analysis
-- **Auto start**: launch with Windows and minimize to tray
-- **Auto update**: check and install new versions
-- **System tray**: control recording without keeping the main window open
-
----
-
-## 📁 Project structure
-
-```text
-Dayflow/
-├── main.py
-├── config.py
-├── requirements.txt
-├── build.py
-├── build.bat
-├── updater.py
-│
-├── core/
-│   ├── types.py
-│   ├── recorder.py
-│   ├── window_tracker.py
-│   ├── llm_provider.py
-│   ├── analysis.py
-│   ├── email_service.py
-│   ├── updater.py
-│   ├── autostart.py
-│   ├── config_manager.py
-│   ├── log_manager.py
-│   ├── stats_collector.py
-│   └── dashboard_exporter.py
-│
-├── database/
-│   ├── schema.sql
-│   ├── storage.py
-│   └── connection_pool.py
-│
-├── ui/
-│   ├── main_window.py
-│   ├── timeline_view.py
-│   ├── stats_view.py
-│   ├── date_range_dialog.py
-│   └── themes.py
-│
-├── templates/
-│   └── dashboard.html
-│
-└── assets/
-    └── icon.ico
-```
-
----
-
-## ⚙️ Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DAYFLOW_API_URL` | API endpoint | `https://apis.iflow.cn/v1` |
-| `DAYFLOW_API_KEY` | API key | (empty) |
-| `DAYFLOW_API_MODEL` | AI model | `qwen3-vl-plus` |
-
----
-
-## 🛠️ Tech stack
-
-| Component | Technology |
-|-----------|------------|
-| GUI | PySide6 (Qt6) |
-| Screen capture | dxcam (DirectX) |
-| Video processing | OpenCV |
-| HTTP client | httpx (HTTP/2) |
-| Database | SQLite |
-| AI analysis | OpenAI-compatible APIs |
-
----
-
-## 🗺️ Roadmap
-
-### Near term
-
-- [ ] More explicit privacy controls and recording safeguards
-- [ ] Smarter activity merging and cleaner timeline segmentation
-- [ ] Richer statistics and trend analysis
-- [ ] More reliable update and installation flow
-- [ ] Better automated testing and CI coverage
-
-### Mid term
-
-- [ ] Multi-monitor support
-- [ ] Better website / app recognition
-- [ ] Local-model or hybrid analysis mode
-- [ ] Smarter daily / weekly behavioral insights
-- [ ] More complete export and reporting options
-
----
-
-## Known limitations
-
-- Windows 10 / 11 only
-- Recognition quality depends on the vision model you configure
-- Some apps may not expose stable window titles
-- Full-screen games, special rendering windows, and remote desktop scenarios may behave differently
-- Multi-monitor support still has room for improvement
-- Analysis latency depends on your network and model provider stability
-
----
-
-## 🧰 Troubleshooting
-
-### 1. No analysis results appear
-
-Check the following first:
-- API URL, key, and model name are correct
-- The configured model supports vision input
-- Your network can reach the model provider
-- The log contains no timeout or request errors
-
-### 2. Screen capture or window tracking looks wrong
-
-Check the following first:
-- You are running on Windows 10 / 11
-- FFmpeg is installed and available in PATH
-- Security software is not blocking capture or window inspection
-- You are not in a special case such as full-screen games, remote desktop, or unusual rendering modes
-
-### 3. Email reports fail to send
-
-Check the following first:
-- QQ Mail SMTP / authorization code is correct
-- The built-in test send works
-- Your local network is not blocking the mail service
-
-### 4. Updates or auto-start do not work
-
-Check the following first:
-- You are running the packaged EXE build
-- The EXE path has not changed unexpectedly
-- System permissions or security policy are not blocking startup/update behavior
-
----
+| Path | Purpose |
+| --- | --- |
+| `src/` | React UI |
+| `src-tauri/` | Windows host, tray, dialogs, and installer |
+| `bridge/` | Local API, scheduling, preferences, and backups |
+| `core/` | Recording, analysis, reports, and updates |
+| `database/` | SQLite storage and migration |
+| `templates/` | HTML dashboard and email templates |
 
 ## 💡 Inspiration
 

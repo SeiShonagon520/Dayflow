@@ -7,11 +7,12 @@
  *   · 类型集中，改后端时编译期就能发现前端用错了
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 // 开发时前端跑在 Vite 上，后端是独立进程；
 // 打包后由 Tauri 启动 bridge，仍走同一端口。
 const BASE = "http://127.0.0.1:8899";
+let session: Promise<string> | undefined;
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -37,11 +38,13 @@ async function request<T>(
 
   let resp: Response;
   try {
+    const token = isTauri() ? await (session ??= invoke<string>("bridge_token")) : "";
     resp = await fetch(`${BASE}${path}`, {
       ...init,
       signal,
       headers: {
         "Content-Type": "application/json",
+        ...(token ? { "X-Dayflow-Session": token } : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -112,6 +115,7 @@ export interface ActivityCard {
 
 export interface Stats {
   days: number;
+  dailyGoal: number;
   rangeStart: string;
   rangeEnd: string;
   metrics: {
@@ -137,6 +141,7 @@ export interface Stats {
 }
 
 export interface RecordingState {
+  needsSetup: boolean;
   isRecording: boolean;
   isPaused: boolean;
   isIdlePaused: boolean;
@@ -159,6 +164,7 @@ export interface Settings {
   email_auth_code: string;
   email_receiver: string;
   email_send_times: string;
+  reduce_motion: string;
   [key: string]: string | boolean;
 }
 
@@ -210,7 +216,7 @@ function normalizeCard(raw: unknown): ActivityCard {
 // ── 接口 ──────────────────────────────────────────────────
 
 export const api = {
-  health: () => request<{ ok: boolean; version: string }>("/api/health"),
+  health: (timeout?: number) => request<{ ok: boolean; version: string }>("/api/health", undefined, timeout, timeout ? 0 : 2),
 
   getCards: async (date: string): Promise<{ cards: ActivityCard[] }> => {
     const res = await request<{ cards: unknown }>(`/api/cards/${date}`);
@@ -263,7 +269,7 @@ export const api = {
   getSettings: () => request<Settings>("/api/settings/all"),
 
   saveSettings: (values: Record<string, string>) =>
-    request<{ ok: boolean }>("/api/settings", {
+    request<{ ok: boolean; apiKeyConfigured?: boolean }>("/api/settings", {
       method: "POST",
       body: JSON.stringify({ values }),
     }),
@@ -272,16 +278,17 @@ export const api = {
      超时报错文案里带的秒数取自这里，所以数值和文案是一套。 */
 
   // 连通性测试要真的打一次模型接口
-  testConnection: () =>
+  testConnection: (values: Record<string, string> = {}) =>
     request<{ ok: boolean; message: string }>("/api/test/connection", {
       method: "POST",
+      body: JSON.stringify({ values }),
     }, 30_000),
 
   getReportDates: () =>
     request<{ dates: string[] }>("/api/reports/dates"),
 
   getReport: (date: string) =>
-    request<{ date: string; content: string }>(`/api/reports/${date}`),
+    request<{ date: string; content: string; hasActivity: boolean }>(`/api/reports/${date}`),
 
   // 生成日报要把一天的记录喂给模型，分钟级。给 5 分钟，
   // 宁可让它慢，也不要生成到一半被判超时 —— 那样最浪费。
@@ -291,7 +298,7 @@ export const api = {
     }, 300_000),
 
   getAutostart: () =>
-    request<{ enabled: boolean; stale: boolean }>("/api/autostart"),
+    request<{ enabled: boolean; stale: boolean; available: boolean }>("/api/autostart"),
 
   setAutostart: (enable: boolean) =>
     request<{ ok: boolean; message: string }>(
@@ -307,7 +314,39 @@ export const api = {
       downloadUrl: string;
       notes: string;
       fileSize: number;
+      verifiedInstaller: boolean;
     }>("/api/update/check", undefined, 30_000),
+
+  downloadUpdate: () =>
+    request<{ digest: string }>("/api/update/download", { method: "POST" }, 300_000),
+
+  installUpdate: (digest: string) => invoke<void>("install_update", { digest }),
+
+  getMonitors: () =>
+    request<{ monitors: { index: number; width: number; height: number }[] }>("/api/monitors"),
+
+  selectChunksDirectory: () => invoke<string | null>("select_chunks_directory"),
+
+  sendTestEmail: (values: Record<string, string> = {}) =>
+    request<{ ok: boolean }>("/api/email/test", { method: "POST", body: JSON.stringify({ values }) }, 60_000),
+
+  getEmailStatus: () =>
+    request<{ last: { send_time: string; success: number; error_message: string } | null }>("/api/email/status"),
+
+  getDashboard: (start: string, end: string) =>
+    request<{ content: string }>(`/api/export/dashboard?${new URLSearchParams({ start, end })}`, undefined, 60_000),
+
+  getBackup: () => request<unknown>("/api/backup", undefined, 60_000),
+
+  importBackup: (content: string, restoreSettings: boolean) =>
+    request<{ imported: number; skipped: number }>(`/api/backup?restore_settings=${restoreSettings}`, {
+      method: "POST",
+      body: content,
+    }, 60_000),
+
+  getLogs: () => request<{ content: string }>("/api/logs"),
+
+  openLogDirectory: () => invoke<void>("open_log_directory"),
 
   getStorageInfo: () =>
     request<{
@@ -317,6 +356,7 @@ export const api = {
       limitGb: number;
       percent: number;
       dataDir: string;
+      removableCount: number;
     }>("/api/storage/info"),
 
   setCacheLimit: (gb: number) =>
@@ -331,7 +371,7 @@ export const api = {
       method: "POST",
     }, 60_000),
 
-  getCsv: (date: string) => request<string>(`/api/export/csv/${date}`),
+  getCsv: (start: string, end: string) => request<string>(`/api/export/csv?${new URLSearchParams({ start, end })}`),
 };
 
 /**

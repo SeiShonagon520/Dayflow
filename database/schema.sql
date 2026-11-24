@@ -83,5 +83,3 @@ CREATE TABLE IF NOT EXISTS daily_reports (
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE INDEX IF NOT EXISTS idx_daily_reports_date ON daily_reports(report_date);

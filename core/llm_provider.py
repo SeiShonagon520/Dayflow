@@ -161,7 +161,7 @@ class DayflowBackendProvider:
             raw_url = f"{raw_url}/v1"
 
         self.api_base_url = raw_url
-        self.api_key = api_key or config.API_KEY
+        self.api_key = config.API_KEY if api_key is None else api_key
         self.model = model or config.API_MODEL
         # 本地模型通常耗时较长，放宽超时时间
         if self.is_ollama and timeout == 120.0:

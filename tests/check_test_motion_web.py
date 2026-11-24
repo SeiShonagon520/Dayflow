@@ -61,11 +61,9 @@ print("=" * 66)
 m = re.search(r"@media \(prefers-reduced-motion: reduce\) \{(.*?)\n\}", CSS, re.S)
 block = m.group(1) if m else ""
 check("有 reduce 媒体查询", bool(block))
-# none 会让 transitionend/animationend 完全不触发，
-# 依赖这些事件的代码会永久挂起 —— 必须是 0.01ms
-check("用 0.01ms 而非 none",
-      "0.01ms" in block and "duration: none" not in block)
-check("例外保留 spinner 旋转", "df-spin" in block)
+check("减少动效的时间和位移为零", "--dur-space: 0ms" in block and "--motion-distance: 0px" in block)
+check("加载环保留静态样式", ".df-spin { animation: none; }" in block)
+check("完整覆盖在系统偏好下仍有效", ':root:not([data-motion="full"])' in block)
 
 print()
 print("=" * 66)
@@ -87,7 +85,7 @@ check("Button 带 df-btn class", "df-btn" in ui)
 check("无 JS onMouseDown 改 transform",
       "onMouseDown" not in ui.split("export function Field")[0])
 check("CSS 里有 :active 缩放", ".df-btn:active" in CSS)
-check("缩放值在 0.97-0.98", "scale(0.97)" in CSS)
+check("按压比例由 token 控制", "scale(var(--motion-press-scale))" in CSS and "--motion-press-scale: 0.98" in TOKENS)
 
 print()
 print("=" * 66)
@@ -107,46 +105,22 @@ print("8. 退场动画（实测修复前：遮罩 12ms 就被移除，一帧没�
 print("=" * 66)
 DIALOG_SRC = (SRC / "components" / "Dialog.tsx").read_text(encoding="utf-8")
 TL_SRC = (SRC / "pages" / "TimelinePage.tsx").read_text(encoding="utf-8")
-check("定义了 df-fade-out", "@keyframes df-fade-out" in CSS)
-check("定义了 df-overlay-out", "@keyframes df-overlay-out" in CSS)
-check(".df-fade-out 挂 animation", ".df-fade-out {" in CSS)
-check(".df-overlay-out 挂 animation", ".df-overlay-out {" in CSS)
-check("--dur-exit token 存在", "--dur-exit:" in TOKENS)
-m_exit = re.search(r"--dur-exit:\s*(\d+)ms", TOKENS)
-m_menu = re.search(r"--dur-menu:\s*(\d+)ms", TOKENS)
-check("退场时长 ≤ 入场时长",
-      bool(m_exit and m_menu) and int(m_exit.group(1)) <= int(m_menu.group(1)),
-      f"exit={m_exit.group(1) if m_exit else '?'}ms "
-      f"menu={m_menu.group(1) if m_menu else '?'}ms")
-# Dialog 不能自己计时卸载：会和父组件的计时器抢跑，
-# 实测遮罩在 12ms 就被移除，退场一帧没播。
-check("Dialog 不自己管退场计时器", "setTimeout" not in DIALOG_SRC)
-check("Dialog 挂退场 class",
-      "df-fade-out" in DIALOG_SRC and "df-overlay-out" in DIALOG_SRC)
-check("Dialog 用 closing = !open 判定", "const closing = !open" in DIALOG_SRC)
-# 关键：退场期间组件必须还挂着。return null 等于瞬间消失。
-# 先去掉块注释再判断 —— 文件头和字段旁都写了「return null 就等于
-# 没有退场」这句话，扫到它就误报了。
-stripped = re.sub(r"/\*.*?\*/", "", DIALOG_SRC, flags=re.S)
-code_lines = [l.split("//")[0] for l in stripped.split("\n")]
-check("Dialog 退场期间不 return null",
-      not any("return null" in l for l in code_lines))
-check("时间轴的撤销条有退场",
-      "df-fade-out" in TL_SRC and "toastClosing" in TL_SRC)
-check("撤销后立即卸载（不播退场）",
-      "setToastClosing(false)" in TL_SRC.split("const handleUndo")[1][:400])
+check("遮罩与提示条有退场过渡", ".df-overlay[data-closing]" in CSS and ".df-toast[data-closing]" in CSS)
+check("进入和退出用同一属性反向过渡", "@starting-style" in CSS and "transition: opacity" in CSS)
+check("Dialog 跟随过渡结束卸载", "useExit(overlay, closing, onExited)" in DIALOG_SRC)
+check("Dialog 无固定退场计时器", "setTimeout" not in DIALOG_SRC)
+check("提示条退场期间保留内容", "useExit(toastElement" in TL_SRC and "toast[0].card.title" in TL_SRC and "createPortal(" in TL_SRC)
+check("退场不晚于入场", "--dur-exit: 120ms" in TOKENS and "--dur-menu: 180ms" in TOKENS)
 
 print()
 print("=" * 66)
-print("9. 布局切换有过渡（侧栏 200px ↔ 56px）")
+print("9. 布局跟手，长列表只过渡内容容器")
 print("=" * 66)
-check("侧栏过渡 width",
-      re.search(r"\.df-sidebar\s*\{[^}]*transition:[^}]*width", CSS,
-                re.S) is not None)
-check("收起时导航文字淡出",
-      '.df-shell[data-layout="rail"] .df-brand-name' in CSS)
-check("导航项文字有过渡",
-      re.search(r"\.df-nav-item > span[^}]*transition", CSS, re.S) is not None)
+check("侧栏无 width / padding 过渡",
+      re.search(r"\.df-sidebar\s*\{[^}]*transition:", CSS, re.S) is None)
+check("进度不逐帧修改宽度", not re.search(r"transition:\s*\W*width", CSS + BLOB))
+check("活动行无逐条动画", "animationDelay" not in TL_SRC)
+check("按钮无需常驻合成层", "will-change: transform" not in CSS)
 
 print()
 print("=" * 66)
@@ -215,15 +189,11 @@ HANDOFF = (SRC / "components" / "LoadingHandoff.tsx").read_text(
     encoding="utf-8")
 check("LoadingHandoff 组件存在", "skeleton" in HANDOFF.lower())
 check("定义了 df-skeleton-out", "@keyframes df-skeleton-out" in CSS)
-check("定义了 df-content-in", "@keyframes df-content-in" in CSS)
-check("--dur-handoff token", "--dur-handoff:" in TOKENS)
-check("时间轴用了交接", "LoadingHandoff" in TL_SRC)
-m_h = re.search(r"const HANDOFF_MS\s*=\s*(\d+)", HANDOFF)
-m_d = re.search(r"--dur-handoff:\s*(\d+)ms", TOKENS)
-check("JS 计时器和 CSS token 一致",
-      bool(m_h and m_d) and int(m_h.group(1)) == int(m_d.group(1)),
-      f"js={m_h.group(1) if m_h else '?'}ms "
-      f"css={m_d.group(1) if m_d else '?'}ms")
+check("内容淡入由交接 token 控制", ".df-content-in" in CSS and "--dur-handoff:" in TOKENS)
+for name in ("TimelinePage", "ReportsPage", "StatsPage"):
+    check(f"{name} 使用加载交接", "LoadingHandoff" in (SRC / "pages" / f"{name}.tsx").read_text(encoding="utf-8"))
+check("骨架在自己的定位容器内退场", ".df-handoff { position: relative; }" in CSS and "inset: 0;" in CSS)
+check("短请求延迟显示骨架，卸载跟随实际动画", "PLACEHOLDER_DELAY" in HANDOFF and "useExit(placeholder" in HANDOFF)
 
 print()
 print("=" * 66)

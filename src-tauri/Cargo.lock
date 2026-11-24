@@ -655,14 +655,16 @@ dependencies = [
 
 [[package]]
 name = "dayflow"
-version = "1.6.0"
+version = "1.7.1"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "uuid",
  "windows-sys 0.59.0",
 ]
 

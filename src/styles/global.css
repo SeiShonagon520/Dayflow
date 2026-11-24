@@ -129,7 +129,7 @@ svg {
   border-radius: inherit;
   box-shadow: 0 0 0 2px var(--accent-ring);
   opacity: 0;
-  transform: scale(0.97);
+  transform: scale(var(--motion-press-scale));
   pointer-events: none;
   transition: opacity var(--dur-base) var(--ease-out),
               transform var(--dur-base) var(--ease-out);
@@ -260,7 +260,7 @@ h4 { font-size: var(--text-md); }
 }
 
 @keyframes df-fade-up {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(var(--motion-distance)); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -269,69 +269,56 @@ h4 { font-size: var(--text-md); }
   to   { opacity: 1; }
 }
 
-@keyframes df-shake {
-  0%, 100% { transform: translateX(0); }
-  25%      { transform: translateX(-4px); }
-  75%      { transform: translateX(4px); }
-}
-
+/* Route changes move content only; navigation and window chrome stay anchored. */
 @keyframes df-page-in {
-  /* 页面切换：轻微上移 + 淡入，说明「内容换了」而不是「窗口闪了」。
-     位移刻意小 —— 四个页面是平级关系，大幅滑动会暗示它们有先后。 */
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(var(--motion-distance)); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes df-fade-out {
-  /* 退场：比入场短。元素直接消失用户会以为弄丢了什么，
-     尤其撤销条 —— 它刚说「已删除」然后凭空蒸发。 */
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to   { opacity: 0; transform: translateY(4px) scale(0.98); }
-}
-
-@keyframes df-overlay-out {
-  from { opacity: 1; }
-  to   { opacity: 0; }
-}
-
-@keyframes df-pop-in {
-  /* 弹层：缩放从 0.96 起步而不是 0。
-     从 0 开始读作「弹出」，弹层该读作「浮现」。 */
-  from { opacity: 0; transform: scale(0.96) translateY(6px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-@keyframes df-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.45; }
-}
-
-/* 页面容器：每次切换重放入场动效。
-   React 复用同一个 DOM 节点，必须用 key 强制重建，动画才会再跑一次。 */
 .df-page {
-  animation: df-page-in var(--dur-space) var(--ease-out);
+  animation: df-page-in var(--dur-page) var(--ease-out);
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* 弹层：入场 + 遮罩淡入 */
-.df-overlay {
-  animation: df-fade-in var(--dur-menu) var(--ease-out);
+.df-overlay,
+.df-toast {
+  opacity: 1;
+  transition: opacity var(--dur-menu) var(--ease-out);
 }
 
-.df-pop-in {
-  animation: df-pop-in var(--dur-menu) var(--ease-out);
+.df-dialog,
+.df-toast {
+  transform: none;
+  transition: transform var(--dur-menu) var(--ease-out),
+              opacity var(--dur-menu) var(--ease-out);
 }
 
-/* 退场。挂在组件上的 class 触发，时长比入场短。 */
-.df-fade-out {
-  animation: df-fade-out var(--dur-exit) var(--ease-out) forwards;
+.df-overlay[data-closing],
+.df-toast[data-closing] {
+  opacity: 0;
+  transition-duration: var(--dur-exit);
 }
 
-.df-overlay-out {
-  animation: df-overlay-out var(--dur-exit) var(--ease-out) forwards;
+.df-overlay[data-closing] .df-dialog,
+.df-toast[data-closing] {
+  transform: translateY(var(--motion-distance)) scale(var(--motion-panel-scale));
+  transition-duration: var(--dur-exit);
+  pointer-events: none;
+}
+
+@starting-style {
+  .df-overlay,
+  .df-toast { opacity: 0; }
+  .df-dialog,
+  .df-toast { transform: translateY(var(--motion-distance)) scale(var(--motion-panel-scale)); }
+}
+
+.df-dialog {
+  max-height: calc(100dvh - var(--space-8));
+  overflow: auto;
 }
 
 /* 对话框：桌面 460px，窄屏收到视口内。
@@ -354,22 +341,10 @@ h4 { font-size: var(--text-md); }
   animation: df-fade-up var(--dur-reveal) var(--ease-out);
 }
 
-/* 加载骨架：静止的点阵呼吸，表示「在处理」而不是「在装饰」 */
+/* A static skeleton keeps long waits legible without continuous repainting. */
 .df-skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--bg-sunken) 25%,
-    var(--bg-hover) 37%,
-    var(--bg-sunken) 63%
-  );
-  background-size: 400% 100%;
-  animation: df-skeleton-sweep 1.4s ease-in-out infinite;
+  background: var(--bg-sunken);
   border-radius: var(--radius-sm);
-}
-
-@keyframes df-skeleton-sweep {
-  from { background-position: 100% 50%; }
-  to   { background-position: 0 50%; }
 }
 
 /* 撤销倒计时：6 秒内从满宽缩到 0。
@@ -385,23 +360,17 @@ h4 { font-size: var(--text-md); }
   to   { transform: scaleX(0); }
 }
 
-/* 成功提示：短暂提亮一次，然后静止。
-   不做持续庆祝 —— 常规操作不配礼花。 */
-.df-success-flash {
-  animation: df-success-pop var(--dur-reveal) var(--ease-out);
-}
-
-/* ── 加载交接 ──────────────────────────────────────────────
-   骨架淡出 + 内容淡入，重叠 200ms。
-   实测修复前：骨架和内容同存 0 帧，加载完成是硬切。 */
+.df-handoff { position: relative; }
 .df-skeleton-out {
-  animation: df-skeleton-out var(--dur-handoff) var(--ease-out) forwards;
   position: absolute;
+  inset: 0;
+  overflow: clip;
   pointer-events: none;
+  animation: df-skeleton-out var(--dur-handoff) var(--ease-out) forwards;
 }
 
 .df-content-in {
-  animation: df-content-in var(--dur-handoff) var(--ease-out);
+  animation: df-fade-in var(--dur-handoff) var(--ease-out);
 }
 
 @keyframes df-skeleton-out {
@@ -409,22 +378,188 @@ h4 { font-size: var(--text-md); }
   to   { opacity: 0; }
 }
 
-@keyframes df-content-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+.df-feedback,
+.df-value-change,
+.df-reveal {
+  animation: df-fade-in var(--dur-reveal) var(--ease-out);
 }
 
-@keyframes df-success-pop {
-  0%   { opacity: 0; transform: translateY(4px); }
-  60%  { opacity: 1; transform: translateY(0); }
-  100% { opacity: 1; transform: translateY(0); }
+.df-value-change { font-variant-numeric: tabular-nums; }
+
+.df-wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
 }
 
-/* 错误抖动：短促、克制。
-   规范说错误动效必须「有用且不抢戏」—— 它唯一的职责是把视线
-   引到旁边的错误文字上，信息本身由文字承担。 */
-.df-shake {
-  animation: df-shake var(--dur-tactile) var(--ease-in-out);
+.df-selection-mark {
+  opacity: 0;
+  font-size: var(--text-2xs);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.df-inline-notice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.df-report-date[aria-current] .df-selection-mark { opacity: 1; }
+
+.df-page[hidden] { display: none; }
+
+.df-report-date {
+  position: relative;
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  min-height: 40px;
+  border-radius: var(--radius-md);
+  text-align: start;
+  color: var(--text-primary);
+  transition: background-color var(--dur-base) var(--ease-out);
+}
+
+.df-report-date[aria-current] {
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+}
+
+.df-report-weekday,
+.df-settings-description {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.df-context-note {
+  margin: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+[data-error="true"] { color: var(--danger); }
+
+.df-details {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+  margin-top: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.df-details p { margin: var(--space-2) 0; }
+.df-details summary,
+.df-settings-section > summary { cursor: pointer; }
+
+.df-settings-section {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  margin-bottom: var(--space-4);
+  padding: var(--space-5);
+  scroll-margin: var(--space-4);
+}
+
+.df-settings-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.df-settings-section > h3,
+.df-settings-section[open] > summary,
+.df-settings-description {
+  margin-bottom: var(--space-3);
+}
+
+.df-setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.df-edit-fields {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.df-edit-fields:disabled { opacity: 0.66; }
+
+.df-undo-toast { bottom: var(--space-6); max-width: calc(100vw - var(--space-5)); }
+.df-mobile-recording {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (max-width: 619px) {
+  .df-undo-toast { bottom: calc(112px + env(safe-area-inset-bottom)); }
+  .df-mobile-recording .df-btn:first-of-type { flex: 1; }
+}
+
+.df-fill {
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transition: transform var(--dur-space) var(--ease-out);
+}
+
+.df-busy-content {
+  display: grid;
+  place-items: center;
+}
+
+.df-busy-content > * { grid-area: 1 / 1; }
+.df-busy-content > [data-hidden] { opacity: 0; }
+
+.df-button-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.df-rec-status .df-rec-dot {
+  background: var(--text-placeholder);
+  transition: background var(--dur-base) var(--ease-out);
+}
+
+.df-rec-status[data-state="recording"] .df-rec-dot { background: var(--recording); }
+.df-rec-status[data-state="paused"] .df-rec-dot { background: var(--warning); }
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduced"]) .df-hit-toggle:active:not(:disabled) { --knob-press: 1.08; }
+}
+[data-motion="full"] .df-hit-toggle:active:not(:disabled) { --knob-press: 1.08; }
+
+.df-spin {
+  display: inline-block;
+  flex: none;
+  animation: df-spin var(--dur-spin) linear infinite;
 }
 
 /* ── 应用外壳：三个宽度阶段 ──────────────────────────────────
@@ -464,13 +599,7 @@ h4 { font-size: var(--text-md); }
   flex-direction: column;
   padding: var(--space-4) var(--space-3);
   gap: 2px;
-  /* width 是布局属性，动画期间每帧重排整棵子树。
-     实测：CPU 降速 4x、7 行列表时收起侧栏掉 1 帧
-     （中位 16.7ms，最大 33.4ms）。这在预算内 ——
-     300ms 一次性的布局开销换来「侧栏去哪了」这个可读信息。
-     降级方案（不动画宽度）是让侧栏瞬跳，但那样内容区会突然后移。 */
-  transition: width var(--dur-space) var(--ease-out),
-              padding var(--dur-space) var(--ease-out);
+
 }
 
 /* 图标栏：只留图标，文字进 aria-label + title */
@@ -738,9 +867,12 @@ h4 { font-size: var(--text-md); }
   transition: opacity var(--dur-base) var(--ease-out);
 }
 
-.df-hover-only[data-revealed="true"],
 .df-hover-only:focus-within {
   opacity: 1;
+}
+
+@media (hover: hover) {
+  .df-row:hover .df-hover-only { opacity: 1; }
 }
 
 @media (hover: none) {
@@ -903,41 +1035,15 @@ h4 { font-size: var(--text-md); }
   padding: var(--space-4) var(--space-6) var(--space-10);
 }
 
-.df-row-list::before,
-.df-row-list::after {
+.df-row-list::before {
   content: "";
   position: absolute;
   left: calc(var(--row-inset) + var(--row-time-width) + var(--row-gap) + 5px);
   pointer-events: none;
-}
-
-.df-row-list::before {
   top: 0;
   bottom: var(--space-10);
   width: 1px;
   background: var(--timeline-track);
-}
-
-.df-row-list::after {
-  top: 0;
-  bottom: var(--space-10);
-  width: 2px;
-  opacity: 0.72;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    transparent 49.4%,
-    var(--accent-text) 50%,
-    transparent 50.6%,
-    transparent 100%
-  );
-  background-size: 100% 200%;
-  background-position: 0% 100%;
-  animation: df-timeline-flow 9s linear infinite;
-}
-
-@keyframes df-timeline-flow {
-  to { background-position: 0% 0%; }
 }
 
 .df-row {
@@ -950,6 +1056,15 @@ h4 { font-size: var(--text-md); }
 
 .df-row:not(:first-child) {
   border-top: 1px solid var(--border-subtle);
+}
+
+/* Keep off-screen rows out of layout and paint during long desktop scrolls.
+   After a row is seen, the browser remembers its measured size. */
+@media (min-width: 760px) {
+  .df-row-list[data-long] .df-row {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 67px;
+  }
 }
 
 .df-row-time {
@@ -1061,10 +1176,6 @@ h4 { font-size: var(--text-md); }
   }
 }
 
-[data-motion="reduced"] .df-row-list::after {
-  display: none;
-}
-
 .u-sr-only {
   position: absolute;
   width: 1px;
@@ -1086,6 +1197,7 @@ h4 { font-size: var(--text-md); }
    :active 只在真正按住的瞬间存在，键盘触发时不生效。
    所以另加 :focus-visible 的轻微缩放，键盘用户也有同等反馈。 */
 .df-btn {
+  background: var(--df-button-bg);
   transition: background var(--dur-tactile) var(--ease-out),
               border-color var(--dur-tactile) var(--ease-out),
               transform var(--dur-tactile) var(--ease-out),
@@ -1093,7 +1205,6 @@ h4 { font-size: var(--text-md); }
                  覆盖 :focus-visible 那条，漏掉就退回硬切。 */
               outline-color var(--dur-base) var(--ease-out),
               outline-offset var(--dur-base) var(--ease-out);
-  will-change: transform;
 }
 
 @media (hover: hover) {
@@ -1112,106 +1223,49 @@ h4 { font-size: var(--text-md); }
 }
 
 .df-btn:active:not(.is-disabled) {
-  transform: scale(0.97);
+  transform: scale(var(--motion-press-scale));
 }
 
 .df-btn:focus-visible:active:not(.is-disabled) {
-  transform: scale(0.97);
+  transform: scale(var(--motion-press-scale));
 }
 
 .df-btn.is-disabled {
   cursor: not-allowed;
 }
 
-/* ── 减少动效 ──────────────────────────────────────────────
-   用户开了系统「减少动态效果」时，砍掉所有位移和缩放，
-   保留必要的状态变化（hover 变色、焦点环不受影响）。
-
-   用 0.01ms 而不是 none —— none 会让 transitionend / animationend
-   完全不触发，依赖这些事件的代码会永久挂起。 */
+/* Preserve the meaning of busy and undo with static state cues. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+  :root:not([data-motion="full"]) {
+    --motion-distance: 0px;
+    --motion-panel-scale: 1;
+    --motion-press-scale: 1;
+    --dur-tactile: 0ms;
+    --dur-base: 0ms;
+    --dur-space: 0ms;
+    --dur-menu: 0ms;
+    --dur-exit: 0ms;
+    --dur-reveal: 80ms;
+    --dur-page: 80ms;
+    --dur-handoff: 80ms;
   }
-
-  .df-row-list::after {
-    display: none;
-  }
-
-  .df-btn:active:not(.is-disabled),
-  .df-btn:focus-visible:active:not(.is-disabled) {
-    transform: none;
-  }
-
-  /* 加载指示器例外：规范把它列在「保留」清单里。
-     转圈承载的是「正在处理」这个信息，停掉就变成一个静止的圆点，
-     用户不知道系统在忙还是在卡死。保留旋转，只降速。 */
-  .df-spin,
-  [style*="df-spin"] {
-    animation-duration: 1.6s !important;
-    animation-iteration-count: infinite !important;
-  }
-
-  /* 撤销倒计时同理：它不是装饰，是「还剩多久」。
-     被砍成 0.01ms 之后条子瞬间缩到 0（实测 scaleX=0），
-     用户看到的是一条满格然后突然没了 —— 比没有更糟。
-     改成均匀步进：不做插值动画，但形状仍然随时间变化。 */
-  .df-undo-timer {
-    animation: df-undo-timer-steps var(--undo-window) steps(24) forwards
-      !important;
-  }
+  :root:not([data-motion="full"]) .df-spin { animation: none; }
+  :root:not([data-motion="full"]) .df-undo-timer { display: none; }
 }
 
-/* 步进版倒计时：每秒跳一格，不做平滑插值。
-   没有移动感（前庭刺激为零），但「还剩多久」读得出来。 */
-@keyframes df-undo-timer-steps {
-  from { transform: scaleX(1); }
-  to   { transform: scaleX(0); }
+:root[data-motion="reduced"] {
+  --motion-distance: 0px;
+  --motion-panel-scale: 1;
+  --motion-press-scale: 1;
+  --dur-tactile: 0ms;
+  --dur-base: 0ms;
+  --dur-space: 0ms;
+  --dur-menu: 0ms;
+  --dur-exit: 0ms;
+  --dur-reveal: 80ms;
+  --dur-page: 80ms;
+  --dur-handoff: 80ms;
 }
 
-/* ── 界面内的动效强度开关 ────────────────────────────────────
-   系统偏好只是兜底。用户在界面里选了「减少」或「完整」后，
-   同样通过 data-motion 属性降级 —— 不需要 JS 逐个改内联样式。 */
-[data-motion="reduced"] *,
-[data-motion="reduced"] *::before,
-[data-motion="reduced"] *::after {
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.01ms !important;
-  scroll-behavior: auto !important;
-}
-
-[data-motion="reduced"] .df-btn:active,
-[data-motion="reduced"] .df-btn:focus-visible:active {
-  transform: none;
-}
-
-[data-motion="reduced"] .df-btn {
-  /* 焦点环的过渡保留 —— 它是状态指示，不是装饰。
-     减的是位移和缩放，不是「你落在哪」。 */
-  transition: background var(--dur-tactile) linear,
-              border-color var(--dur-tactile) linear,
-              outline-color var(--dur-tactile) linear,
-              outline-offset var(--dur-tactile) linear;
-}
-
-[data-motion="reduced"] .df-spin,
-[data-motion="reduced"] [style*="df-spin"] {
-  animation-duration: 1.6s !important;
-  animation-iteration-count: infinite !important;
-}
-
-/* 选了「完整」时，即使系统要求减少也照常播放。
-   这是用户的显式选择，优先级高于系统默认。 */
-[data-motion="full"] .df-btn:active,
-[data-motion="full"] .df-btn:focus-visible:active {
-  transform: scale(0.97);
-  transition: background var(--dur-tactile) var(--ease-out),
-              border-color var(--dur-tactile) var(--ease-out),
-              transform var(--dur-tactile) var(--ease-out);
-}
+[data-motion="reduced"] .df-spin { animation: none; }
+[data-motion="reduced"] .df-undo-timer { display: none; }

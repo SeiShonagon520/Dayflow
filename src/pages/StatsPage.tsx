@@ -18,7 +18,8 @@ import {
   fullDate,
   scoreVar,
 } from "@/lib/format";
-import { Card, EmptyState, SectionTitle, Spinner } from "@/components/ui";
+import { Button, Card, EmptyState, SectionTitle, Spinner } from "@/components/ui";
+import { LoadingHandoff } from "@/components/LoadingHandoff";
 import { CategoryPatterns } from "@/components/CategoryPatterns";
 import { useIsPhone } from "@/lib/useMediaQuery";
 import { FocusRing } from "@/components/FocusRing";
@@ -33,8 +34,10 @@ export function StatsPage() {
      前者保留旧内容压暗，后者才显示骨架。 */
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
   const load = async (d: 7 | 30) => {
+    const id = ++request.current;
     /* 只在第一次加载时卸载整页。
        之后切换周期时保留旧数据、压暗显示 ——
        否则整页会被卸载重建，工具栏连同方向键焦点一起消失，
@@ -43,17 +46,21 @@ export function StatsPage() {
     else setRefreshing(true);
     setError(null);
     try {
-      setData(await api.getStats(d));
+      const next = await api.getStats(d);
+      if (id === request.current) setData(next);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "加载失败");
+      if (id === request.current) setError(e instanceof ApiError ? e.message : "加载失败");
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (id === request.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
     load(days);
+    return () => { request.current++; };
   }, [days]);
 
   // Hook 必须在所有 early return 之前调用。
@@ -61,37 +68,7 @@ export function StatsPage() {
   // "Rendered more hooks than during the previous render"，整页白掉。
   const phone = useIsPhone();
 
-  if (loading) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
-        {patterns}
-        <Spinner size={20} />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <EmptyState
-        icon="⚠️"
-        title="统计数据加载失败"
-        description={error}
-        action={<button onClick={() => load(days)}>重试</button>}
-      />
-    );
-  }
-
-  if (!data || data.metrics?.activityCount === 0) {
-    return (
-      <EmptyState
-        icon="◔"
-        title={`最近 ${days} 天没有活动记录`}
-        description="开始录制后，这里会显示时间分布、专注趋势和应用使用排行。"
-      />
-    );
-  }
-
-  const m = data.metrics;
+  const m = data?.metrics;
 
   return (
     <div style={{ overflowY: "auto", height: "100%" }}>
@@ -109,7 +86,7 @@ export function StatsPage() {
             className="df-page-subtitle"
             style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)" }}
           >
-            {data.rangeStart} → {data.rangeEnd}
+            {data && `${data.rangeStart} → ${data.rangeEnd}`}
           </span>
           <div className="df-toolbar-spacer" />
           <Segmented
@@ -124,6 +101,15 @@ export function StatsPage() {
         </div>
       </div>
 
+      <LoadingHandoff loading={loading}
+        skeleton={<div className="df-wait"><Spinner />正在加载统计</div>}>
+      {error && !data ? (
+        <EmptyState icon="⚠️" title="统计数据加载失败" description={error}
+          action={<Button onClick={() => load(days)}>重试</Button>} />
+      ) : !data || !m || m.activityCount === 0 ? (
+        <EmptyState icon="◔" title={`最近 ${data?.days ?? days} 天没有活动记录`}
+          description="开始录制后，这里会显示时间分布、专注趋势和应用使用排行。" />
+      ) : (
       <div
         className="df-content-pad"
         style={{
@@ -132,12 +118,26 @@ export function StatsPage() {
           gap: "var(--space-6)",
           /* 重新取数时压暗旧内容，而不是卸载它。
              卸载会让整页高度塌陷再撑开，滚动位置也跟着跳。 */
-          opacity: refreshing ? 0.55 : 1,
+          opacity: refreshing ? 0.72 : 1,
           transition: "opacity var(--dur-base) var(--ease-out)",
           pointerEvents: refreshing ? "none" : undefined,
         }}
         aria-busy={refreshing || undefined}
       >
+        {error && (
+          <div className="df-inline-notice" role="alert">
+            <span>更新失败，当前显示上一次读取的统计。</span>
+            <Button size="sm" onClick={() => load(days)}>重试</Button>
+          </div>
+        )}
+        <Card>
+          <SectionTitle action={<span className="u-tabular">{m.todayHours} / {data.dailyGoal || 8} 小时</span>}>今日目标</SectionTitle>
+          <div role="progressbar" aria-label="今日目标" aria-valuemin={0} aria-valuemax={data.dailyGoal || 8}
+            aria-valuenow={Math.min(m.todayHours, data.dailyGoal || 8)}
+            style={{ height: 8, borderRadius: "var(--radius-full)", overflow: "hidden", background: "var(--bg-sunken)" }}>
+            <div className="df-fill" style={{ background: "var(--accent)", transform: `scaleX(${Math.min(1, m.todayHours / (data.dailyGoal || 8))})` }} />
+          </div>
+        </Card>
         {/* ── 指标卡 ─────────────────────────────── */}
         <div
           style={{
@@ -223,6 +223,8 @@ export function StatsPage() {
           <AppRanking data={data.appRanking} />
         </Card>
       </div>
+      )}
+      </LoadingHandoff>
     </div>
   );
 }
@@ -266,7 +268,8 @@ function Metric({
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
         <span
-          className="u-tabular"
+          key={value}
+          className="df-value-change u-tabular"
           style={{ fontSize: "var(--text-2xl)", fontWeight: "var(--weight-semibold)" }}
         >
           {value}
@@ -683,13 +686,11 @@ function AppRanking({
           <div
             style={{ flex: 1, height: 8, background: "var(--bg-sunken)", borderRadius: "var(--radius-full)" }}
           >
-            <div
+            <div className="df-fill"
               style={{
-                width: `${(d.minutes / max) * 100}%`,
-                height: "100%",
+                transform: `scaleX(${d.minutes / max})`,
                 background: "var(--accent)",
                 borderRadius: "var(--radius-full)",
-                transition: "width var(--dur-space) var(--ease-out)",
               }}
             />
           </div>
@@ -822,9 +823,7 @@ export function Segmented({
               background: active ? "var(--bg-surface)" : "transparent",
               color: active ? "var(--text-primary)" : "var(--text-tertiary)",
               fontSize: "var(--text-xs)",
-              fontWeight: active
-                ? "var(--weight-semibold)"
-                : "var(--weight-normal)",
+              fontWeight: "var(--weight-medium)",
               boxShadow: active ? "var(--shadow-sm)" : "none",
               position: "relative",
               touchAction: "manipulation",
