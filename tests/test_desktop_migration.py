@@ -229,6 +229,9 @@ def test_connection_check_uses_draft_without_saving_or_forwarding_old_key(deskto
         async def test_connection(self):
             return True, "connected"
 
+        async def close(self):
+            pass
+
     monkeypatch.setattr(llm_provider, "DayflowBackendProvider", Provider)
     response = client.post("/api/test/connection", json={"values": {
         "api_url": "https://new.invalid/v1", "api_model": "draft-model", "api_key": "********",

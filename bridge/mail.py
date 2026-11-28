@@ -51,7 +51,8 @@ def check_email_schedule(storage, now=None):
             if now - datetime.fromisoformat(row["send_time"]) < timedelta(minutes=5):
                 continue
         try:
-            html = ReportGenerator(storage).generate_daily_report(scheduled)
+            generator = ReportGenerator(storage)
+            html = generator.generate_daily_report(scheduled, use_ai=True) if values["email_ai_enrichment"] == "1" else generator.generate_daily_report(scheduled)
             ok, _ = service.send_report(f"Dayflow 日报 {scheduled.date().isoformat()}", html)
         except Exception:
             ok = False

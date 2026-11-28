@@ -17,8 +17,6 @@ export const CATEGORIES = [
   "其他",
 ] as const;
 
-export type Category = (typeof CATEGORIES)[number] | string;
-
 /**
  * 每个类别的形状标记。
  *
@@ -83,14 +81,6 @@ export function categoryVar(cat: string): string {
   return map[cat] ?? "--cat-other";
 }
 
-/** 类别 → 实际色值（图表 canvas 用，需要具体字符串） */
-export function categoryColor(cat: string): string {
-  const v = getComputedStyle(document.documentElement)
-    .getPropertyValue(categoryVar(cat))
-    .trim();
-  return v || "#6e6e73";
-}
-
 // ── 日期 ──────────────────────────────────────────────────
 
 export function todayStr(): string {
@@ -135,8 +125,9 @@ export function isToday(dateStr: string): boolean {
 
 export function formatMinutes(mins: number): string {
   if (mins <= 0) return "0m";
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
+  const rounded = Math.round(mins);
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
   if (h === 0) return `${m}m`;
   if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;

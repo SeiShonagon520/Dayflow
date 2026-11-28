@@ -12,7 +12,9 @@
 use std::process::{Child, Command};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
 use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
@@ -116,10 +118,6 @@ impl JobHandle {
     fn assign(&self, _pid: u32) {}
 }
 
-/// 8899 与 src/lib/api.ts 里的 BASE 必须一致。
-#[allow(dead_code)]
-const BRIDGE_PORT: u16 = 8899;
-
 #[tauri::command]
 async fn save_text_file(app: AppHandle, default_name: String, content: String, ext: String) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
@@ -167,6 +165,33 @@ fn open_log_directory() -> Result<(), String> {
         .map(|_| ()).map_err(|_| "无法打开日志目录".to_owned())
 }
 
+/// 托盘退出与更新安装共用同一 Bridge 优雅停机通道（12s 总超时，严格大于服务端 10s 截止时间）。
+fn graceful_shutdown_bridge(token: &str) -> Result<(), String> {
+    let addr: SocketAddr = "127.0.0.1:8899".parse().map_err(|_| "无效的后台地址".to_owned())?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+        .map_err(|_| "后台服务未响应，无法确认最终数据已保存".to_owned())?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(12)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+
+    let req = format!(
+        "POST /api/system/shutdown HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nX-Dayflow-Session: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        token
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|_| "无法向后台发送安全退出请求".to_owned())?;
+    let mut resp = String::new();
+    stream
+        .read_to_string(&mut resp)
+        .map_err(|_| "等待后台安全落盘超时".to_owned())?;
+    let status_line = resp.lines().next().unwrap_or("");
+    if status_line.contains(" 200 ") {
+        Ok(())
+    } else {
+        Err("后台未能完成最终落盘与释放数据库，请稍后重试".to_owned())
+    }
+}
+
 #[tauri::command]
 async fn install_update(app: AppHandle, digest: String) -> Result<(), String> {
     let installer = local_data()?.join("updates").join("setup.exe");
@@ -187,6 +212,19 @@ async fn install_update(app: AppHandle, digest: String) -> Result<(), String> {
         return Err("安装包校验失败，请重新下载".to_owned());
     }
     drop(file);
+
+    // 更新安装必须等待 Bridge 确认落盘并关闭数据库连接池；失败或超时中止安装，绝不强杀覆盖
+    if let Some(state) = app.try_state::<BridgeProcess>() {
+        let token = state.token.clone();
+        tauri::async_runtime::spawn_blocking(move || graceful_shutdown_bridge(&token))
+            .await
+            .map_err(|_| "等待后台安全退出失败".to_owned())??;
+        if let Some(mut child) = state.child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
     Command::new(installer).spawn().map_err(|_| "无法启动安装程序".to_owned())?;
     app.exit(0);
     Ok(())
@@ -204,17 +242,16 @@ fn bundled_bridge_path(exe_dir: &Path) -> Option<PathBuf> {
 }
 
 /// 开发模式下寻找项目根目录（包含 bridge/entry.py 的目录）
-fn find_project_root(start_dir: &Path) -> PathBuf {
+fn find_project_root(start_dir: &Path) -> Option<PathBuf> {
     let mut curr = start_dir.to_path_buf();
     loop {
         if curr.join("bridge").join("entry.py").is_file() {
-            return curr;
+            return Some(curr);
         }
         if !curr.pop() {
-            break;
+            return None;
         }
     }
-    start_dir.to_path_buf()
 }
 
 /// 启动 bridge，失败时返回错误信息而不是 panic —— 用户应该看到
@@ -222,14 +259,27 @@ fn find_project_root(start_dir: &Path) -> PathBuf {
 fn spawn_bridge(token: &str, minimized: bool) -> Result<Child, String> {
     let exe_dir = exe_dir();
     let bundled = bundled_bridge_path(&exe_dir);
-
-    let (mut cmd, work_dir) = if let Some(ref path) = bundled {
-        (Command::new(path), exe_dir.clone())
+    let dev_root = if cfg!(debug_assertions) {
+        find_project_root(&exe_dir)
     } else {
-        let repo_root = find_project_root(&exe_dir);
-        let mut c = Command::new("python");
+        None
+    };
+
+    // 开发模式下优先运行源码 bridge/entry.py，避免静默执行 target/debug/ 下过期的打包 EXE；
+    // 发布模式或脱离源码树时运行随包携带的 sidecar。
+    let (mut cmd, work_dir, using_bundled) = if let Some(repo_root) = dev_root {
+        let python = std::env::var("DAYFLOW_PYTHON").unwrap_or_else(|_| "python".to_owned());
+        let mut c = Command::new(python);
         c.arg("bridge/entry.py");
-        (c, repo_root)
+        (c, repo_root, false)
+    } else if let Some(ref path) = bundled {
+        (Command::new(path), exe_dir.clone(), true)
+    } else {
+        let repo_root = find_project_root(&exe_dir).unwrap_or_else(|| exe_dir.clone());
+        let python = std::env::var("DAYFLOW_PYTHON").unwrap_or_else(|_| "python".to_owned());
+        let mut c = Command::new(python);
+        c.arg("bridge/entry.py");
+        (c, repo_root, false)
     };
 
     let project_root = std::env::var("DAYFLOW_ROOT")
@@ -251,7 +301,7 @@ fn spawn_bridge(token: &str, minimized: bool) -> Result<Child, String> {
         // 需要排查时把 null 换成 Stdio::inherit()。
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if bundled.is_some() && !cfg!(debug_assertions) {
+    if using_bundled && !cfg!(debug_assertions) {
         cmd.env("DAYFLOW_HOST_EXE", std::env::current_exe().map_err(|e| e.to_string())?);
     }
 
@@ -269,7 +319,6 @@ fn exe_dir() -> std::path::PathBuf {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             bridge_token, show_main_window, save_text_file, select_chunks_directory, open_log_directory, install_update
         ])
@@ -298,9 +347,9 @@ fn main() {
 
             // ── 托盘 ────────────────────────────────────────
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-            let start = MenuItem::with_id(app, "start", "开始录制", true, None::<&str>)?;
-            let stop = MenuItem::with_id(app, "stop", "停止录制", true, None::<&str>)?;
-            let pause = MenuItem::with_id(app, "pause", "暂停 / 继续录制", true, None::<&str>)?;
+            let start = MenuItem::with_id(app, "start", "开始记录", true, None::<&str>)?;
+            let stop = MenuItem::with_id(app, "stop", "停止记录", true, None::<&str>)?;
+            let pause = MenuItem::with_id(app, "pause", "暂停 / 继续", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
 
@@ -317,7 +366,29 @@ fn main() {
                     "start" => emit_to_frontend(app, "tray", "start"),
                     "stop" => emit_to_frontend(app, "tray", "stop"),
                     "pause" => emit_to_frontend(app, "tray", "pause"),
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        let handle = app.clone();
+                        std::thread::spawn(move || {
+                            if let Some(state) = handle.try_state::<BridgeProcess>() {
+                                let token = state.token.clone();
+                                let running = state.child.lock().unwrap().as_mut()
+                                    .is_some_and(|child| !matches!(child.try_wait(), Ok(Some(_))));
+                                if running {
+                                    if let Err(err) = graceful_shutdown_bridge(&token) {
+                                        eprintln!("[dayflow] graceful shutdown failed: {err}");
+                                        show_window(&handle);
+                                        emit_to_frontend(&handle, "tray", "quit-error");
+                                        return;
+                                    }
+                                }
+                                if let Some(mut child) = state.child.lock().unwrap().take() {
+                                    let _ = child.kill();
+                                    let _ = child.wait();
+                                }
+                            }
+                            handle.exit(0);
+                        });
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

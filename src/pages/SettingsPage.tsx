@@ -14,17 +14,29 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError, Settings, api } from "@/lib/api";
-import { Button, Field, Input, Select, Spinner, Toggle } from "@/components/ui";
-import { Dialog } from "@/components/Dialog";
+import { Button, Field, Input, NumberStepper, Select, Spinner, Toggle } from "@/components/ui";
+import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/Dialog";
 import { DataTools, LogTools } from "@/components/DesktopTools";
+import { LoadingHandoff } from "@/components/LoadingHandoff";
 import { MotionControl } from "@/components/MotionControl";
 import { LineIcon, LineIconName } from "@/components/LineIcon";
 import { useIsPhone } from "@/lib/useMediaQuery";
+import { isReducedMotionActive } from "@/lib/motion";
 
 const GROUPS = {
   ai: ["api_url", "api_model", "api_key"],
-  record: ["record_output_idx", "idle_pause_enabled", "idle_pause_timeout_min", "custom_chunks_dir", "chunks_max_size_gb", "daily_goal"],
-  email: ["email_enabled", "email_sender", "email_receiver", "email_auth_code", "email_send_times"],
+  record: [
+    "recording_mode",
+    "local_context_mode",
+    "local_ai_refinement",
+    "record_output_idx",
+    "idle_pause_enabled",
+    "idle_pause_timeout_min",
+    "custom_chunks_dir",
+    "chunks_max_size_gb",
+    "daily_goal",
+  ],
+  email: ["email_enabled", "email_ai_enrichment", "email_sender", "email_receiver", "email_auth_code", "email_send_times"],
 } as const;
 
 type Group = keyof typeof GROUPS;
@@ -72,7 +84,15 @@ function validate(group: Group, values: Settings) {
   return null;
 }
 
-export function SettingsPage({ setupRequest, isRecording }: { setupRequest: number; isRecording: boolean }) {
+export function SettingsPage({
+  setupRequest,
+  isRecording,
+  active = true,
+}: {
+  setupRequest: number;
+  isRecording: boolean;
+  active?: boolean;
+}) {
   const [s, setS] = useState<Settings | null>(null);
   const [saved, setSaved] = useState<Settings | null>(null);
   const [notices, setNotices] = useState<Partial<Record<Group, Notice>>>({});
@@ -104,11 +124,11 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
   }, []);
 
   useEffect(() => {
-    if (!s || setupRequest <= handledSetup.current) return;
+    if (!active || !s || setupRequest <= handledSetup.current) return;
     handledSetup.current = setupRequest;
     document.getElementById("settings-ai")?.scrollIntoView({ block: "start" });
     document.getElementById(s.api_url ? "api-key" : "api-url")?.focus({ preventScroll: true });
-  }, [s, setupRequest]);
+  }, [active, s, setupRequest]);
 
   const set = (key: string, value: string) => {
     setS((current) => current ? { ...current, [key]: value } : current);
@@ -160,8 +180,13 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
     setTesting(true);
     notify("ai");
     try {
-      const result = await api.testConnection({ api_url: s.api_url, api_model: s.api_model, api_key: s.api_key });
-      notify("ai", { kind: result.ok ? "ok" : "err", text: result.ok ? "模型连接成功" : result.message });
+      const result = await api.testConnection({
+        api_url: s.api_url,
+        api_model: s.api_model,
+        api_key: s.api_key,
+        recording_mode: s.recording_mode || "local",
+      });
+      notify("ai", { kind: result.ok ? "ok" : "err", text: result.message });
     } catch (error) {
       notify("ai", { kind: "err", text: error instanceof Error ? error.message : "测试失败，请重试" });
     } finally {
@@ -198,29 +223,12 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
   // —— 整个设置页白掉。错误边界把它兜住了，但页面对用户仍然是坏的。
   const phone = useIsPhone();
 
-  if (loadError) {
-    return (
-      <div style={{ padding: "var(--space-8)", textAlign: "center" }}>
-        <p style={{ color: "var(--danger)", marginBottom: 12 }}>{loadError}</p>
-        <Button onClick={load}>重试</Button>
-      </div>
-    );
-  }
-
-  if (!s) {
-    return (
-      <div className="df-wait" role="status">
-        <Spinner size={20} />正在读取设置
-      </div>
-    );
-  }
-
-  const SECTIONS: Section[] = [
+  const SECTIONS: Section[] = s ? [
     {
       id: "ai",
       icon: "sparkles",
       title: "连接分析模型",
-      desc: "选择能识别截图的模型，用于整理活动和生成日报。",
+      desc: "截图分析和 AI 补充日报需要模型。本机计时可直接使用。",
       group: "ai",
       body: (_s, set) => (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
@@ -264,8 +272,13 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
 
           <div>
             <Button onClick={test} loading={testing} disabled={!!saving.ai}>
-              测试连接
+              {s.recording_mode === "visual" ? "测试识图" : "测试连接"}
             </Button>
+            <p className="df-settings-description" style={{ marginTop: 8 }}>
+              {s.recording_mode === "visual"
+                ? "测试使用程序生成的样图，校验模型识图能力。"
+                : "测试发送合成纯文本挑战，校验模型纯文本与 JSON 响应能力。"}
+            </p>
           </div>
         </div>
       ),
@@ -273,13 +286,46 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
     {
       id: "record",
       icon: "record",
-      title: "录制",
-      desc: "影响后台采集的屏幕活动数据。",
+      title: "活动记录",
+      desc: "按需要选择本机事件感知或截图分析。",
       group: "record",
       body: (_s, set) => (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-          {isRecording && <p className="df-context-note">正在录制。停止后可以更改显示器、空闲检测和切片目录。</p>}
+          {isRecording && <p className="df-context-note">停止记录后可更改记录方式、上下文粒度、显示器和空闲检测；纯文本精炼开关可随时关闭。</p>}
           <fieldset className="df-edit-fields" disabled={isRecording}>
+          <Field label="记录方式" htmlFor="recording-mode" hint={s.recording_mode === "visual"
+            ? "使用配置的模型分析关键帧，并补分析已保留的切片。"
+            : "事件驱动记录活动用时，保存在本机，无截屏或视频切片。截图分析排队任务会暂停。"}>
+            <Select id="recording-mode" value={s.recording_mode || "local"}
+              onChange={(e) => set("recording_mode", e.target.value)}>
+              <option value="local">本机计时</option>
+              <option value="visual">截图分析</option>
+            </Select>
+          </Field>
+          {s.recording_mode !== "visual" && (
+          <div className="df-fade-up">
+          <Field
+            label="本机上下文粒度"
+            htmlFor="local-context-mode"
+            hint={
+              s.local_context_mode === "structured"
+                ? "在确认非私密窗口后，本机提取已支持浏览器的域名、IDE 项目/文档名与前台会议信号（不保存网页标题、URL 路径或查询串）。"
+                : "默认最小采集：仅保存应用名称与用时，不保存窗口标题、域名或项目名。"
+            }
+          >
+            <Select
+              id="local-context-mode"
+              value={s.local_context_mode || "app_only"}
+              onChange={(e) => set("local_context_mode", e.target.value)}
+            >
+              <option value="app_only">仅应用名（默认）</option>
+              <option value="structured">结构化上下文（域名 / 项目 / 文档）</option>
+            </Select>
+          </Field>
+          </div>
+          )}
+          {s.recording_mode === "visual" && (
+          <div className="df-fade-up">
           <Field
             label="录制显示器"
             htmlFor="monitor"
@@ -301,6 +347,8 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
               <option value="-1">全部显示器（拼接）</option>
             </Select>
           </Field>
+          </div>
+          )}
 
           <div
             style={{
@@ -326,41 +374,76 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
           </div>
 
           {s.idle_pause_enabled === "1" && (
-            <Field label="空闲时长（分钟）" htmlFor="idle">
-              <Input
+            <div className="df-fade-up">
+            <Field label="空闲时长" htmlFor="idle">
+              <NumberStepper
                 id="idle"
-                type="number"
                 min={1}
                 max={120}
+                unit="分钟"
+                presets={[5, 10, 15, 30]}
                 value={s.idle_pause_timeout_min}
-                onChange={(e) => set("idle_pause_timeout_min", e.target.value)}
-                style={{ width: 120 }}
+                disabled={isRecording}
+                onChange={(v) => set("idle_pause_timeout_min", v)}
               />
             </Field>
+            </div>
           )}
 
-          <Field label="切片目录" htmlFor="chunks-directory" hint="留空使用默认目录。保存后，新切片会写入所选目录。">
+          {s.recording_mode === "visual" && <div className="df-fade-up"><Field label="切片目录" htmlFor="chunks-directory" hint="留空使用默认目录。保存后，新切片会写入所选目录。">
             <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
               <Input id="chunks-directory" value={s.custom_chunks_dir} onChange={(event) => set("custom_chunks_dir", event.target.value)} style={{ flex: 1, minWidth: 180 }} />
               <Button onClick={chooseDirectory} disabled={isRecording}>选择目录</Button>
               {s.custom_chunks_dir && <Button onClick={() => set("custom_chunks_dir", "")} disabled={isRecording}>恢复默认</Button>}
             </div>
-          </Field>
+          </Field></div>}
           </fieldset>
-          <Field label="切片容量上限（GB）" htmlFor="cache-limit">
-            <Input id="cache-limit" type="number" min={1} max={500} value={s.chunks_max_size_gb}
-              onChange={(event) => set("chunks_max_size_gb", event.target.value)} style={{ width: 120 }} />
-          </Field>
+          {s.recording_mode !== "visual" && (
+            <div
+              className="df-fade-up"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "var(--space-4)",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-medium)" }}>
+                  定时纯文本 AI 精炼卡片
+                </div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
+                  仅向所选文本模型发送已封口未编辑卡片的固定应用标签、分类与时长（不传截图、域名、项目或文档名），按服务商文本 Token 计费，录制中可随时关闭。
+                </div>
+              </div>
+              <Toggle
+                label="定时纯文本 AI 精炼卡片"
+                checked={s.local_ai_refinement === "1"}
+                onChange={(v) => set("local_ai_refinement", v ? "1" : "0")}
+              />
+            </div>
+          )}
+          {s.recording_mode === "visual" && <div className="df-fade-up"><Field label="切片容量上限" htmlFor="cache-limit">
+            <NumberStepper
+              id="cache-limit"
+              min={1}
+              max={500}
+              unit="GB"
+              presets={[5, 10, 20, 50]}
+              value={s.chunks_max_size_gb}
+              onChange={(v) => set("chunks_max_size_gb", v)}
+            />
+          </Field></div>}
 
-          <Field label="每日目标（小时）" htmlFor="goal" hint="统计页的进度条以此为基准">
-            <Input
+          <Field label="每日目标" htmlFor="goal" hint="统计页的进度条以此为基准">
+            <NumberStepper
               id="goal"
-              type="number"
               min={1}
               max={24}
+              unit="小时"
+              presets={[4, 6, 8, 10]}
               value={s.daily_goal}
-              onChange={(e) => set("daily_goal", e.target.value)}
-              style={{ width: 120 }}
+              onChange={(v) => set("daily_goal", v)}
             />
           </Field>
         </div>
@@ -385,7 +468,7 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
             />
           </div>
 
-          {s.email_enabled === "1" && <>
+          {s.email_enabled === "1" && <div className="df-fade-up" style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
               <Field label="发件邮箱" htmlFor="mail-from">
                 <Input
                   id="mail-from"
@@ -432,13 +515,21 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
               <div>
                 <Button onClick={testEmail} loading={mailTesting} disabled={!!saving.email}>发送测试邮件</Button>
               </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+                <div>
+                  <div>邮件附加 AI 解读</div>
+                  <div className="df-settings-description">独立外发授权：开启后定时邮件会将当日聚合统计（分类与专注汇总，不含原始域名或文档名）发送至已配置模型。</div>
+                </div>
+                <Toggle label="邮件附加 AI 解读" checked={s.email_ai_enrichment === "1"}
+                  onChange={(enabled) => set("email_ai_enrichment", enabled ? "1" : "0")} />
+              </div>
               {mailStatus && (
                 <p role="status" style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
                   上次定时发送 {mailStatus.send_time.replace("T", " ").slice(0, 16)}
                   {mailStatus.success ? " · 成功" : " · 失败，请检查邮箱和网络"}
                 </p>
               )}
-            </>}
+            </div>}
         </div>
       ),
     },
@@ -476,6 +567,14 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
       desc: "版本与隐私说明。",
       body: () => <AboutSection />,
     },
+  ] : [];
+
+  const quickNav = [
+    { id: "settings-ai", label: "分析模型" },
+    { id: "settings-record", label: "活动记录" },
+    { id: "settings-email", label: "邮件日报" },
+    { id: "settings-system", label: "系统" },
+    { id: "settings-storage", label: "存储" },
   ];
 
   return (
@@ -486,62 +585,100 @@ export function SettingsPage({ setupRequest, isRecording }: { setupRequest: numb
       >
         <div className="df-toolbar-row">
           <h2 className="df-page-title">设置</h2>
+          <div className="df-toolbar-spacer" />
+          {!phone && s && (
+            <nav className="df-settings-nav" aria-label="设置分组快速跳转">
+              {quickNav.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="df-settings-nav-item"
+                  onClick={() => document.getElementById(item.id)?.scrollIntoView({
+                    behavior: isReducedMotionActive() ? "auto" : "smooth",
+                    block: "start",
+                  })}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+          )}
         </div>
       </div>
 
-      <div
-        className="df-content-pad"
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          maxWidth: 720,
-          width: "100%",
-          marginInline: "auto",
-        }}
-      >
-        {SECTIONS.map((section) => {
-          const group = section.group;
-          const notice = group ? notices[group] : undefined;
-          const edited = group ? changed(group).length > 0 : false;
-          const advanced = ["appearance", "backup", "logs", "about"].includes(section.id);
-          const heading = (
-            <span className="df-settings-heading">
-              <LineIcon name={section.icon} />
-              <span>{section.title}</span>
-            </span>
-          );
-          const content = <>
-            {section.desc && <p className="df-settings-description">{section.desc}</p>}
-            {section.body(s, set)}
-            {group && (edited || notice) && (
-              <div className="df-setting-actions">
-                {notice && <span className="df-feedback" role={notice.kind === "err" ? "alert" : "status"}
-                  data-error={notice.kind === "err" || undefined}>{notice.text}</span>}
-                {edited && <>
-                  <Button size="sm" variant="ghost" disabled={!!saving[group]} onClick={() => {
-                    if (saved) setS((current) => current ? { ...current, ...Object.fromEntries(
-                      GROUPS[group].map((key) => [key, saved[key]]),
-                    ) } : current);
-                    notify(group);
-                  }}>撤回更改</Button>
-                  <Button size="sm" variant="primary" loading={saving[group]} onClick={() => save(group)}>
-                    {group === "ai" ? "保存模型" : group === "record" ? "保存录制设置" : "保存邮件设置"}
-                  </Button>
-                </>}
+      <div className="df-settings-scroll">
+        <div className="df-settings-container">
+          <LoadingHandoff
+            loading={!s && !loadError}
+            skeleton={
+              <div className="df-wait" role="status">
+                <Spinner size={20} />正在读取设置
               </div>
-            )}
-          </>;
-          if (advanced) return (
-            <details key={section.id} className="df-settings-section">
-              <summary>{heading}</summary>
-              {content}
-            </details>
-          );
-          return <section key={section.id} id={`settings-${section.id}`} className="df-settings-section">
-            <h3>{heading}</h3>
-            {content}
-          </section>;
-        })}
+            }
+          >
+            {loadError ? (
+              <div className="df-fade-up" style={{ padding: "var(--space-8)", textAlign: "center" }}>
+                <p style={{ color: "var(--danger)", marginBottom: 12 }}>{loadError}</p>
+                <Button onClick={load}>重试</Button>
+              </div>
+            ) : s ? (
+              SECTIONS.map((section) => {
+                const group = section.group;
+                const notice = group ? notices[group] : undefined;
+                const edited = group ? changed(group).length > 0 : false;
+                const advanced = ["appearance", "backup", "logs", "about"].includes(section.id);
+                const heading = (
+                  <span className="df-settings-heading">
+                    <LineIcon name={section.icon} size={16} />
+                    <span>{section.title}</span>
+                  </span>
+                );
+                const content = <>
+                  {section.desc && <p className="df-settings-description">{section.desc}</p>}
+                  {section.body(s, set)}
+                  {group && (edited || notice) && (
+                    <div className="df-setting-actions df-fade-up">
+                      {notice && (
+                        <span
+                          key={`${notice.kind}-${notice.text}`}
+                          className="df-feedback"
+                          role={notice.kind === "err" ? "alert" : "status"}
+                          data-error={notice.kind === "err" || undefined}
+                        >
+                          {notice.text}
+                        </span>
+                      )}
+                      {edited && <>
+                        <Button size="sm" variant="ghost" disabled={!!saving[group]} onClick={() => {
+                          if (saved) setS((current) => current ? { ...current, ...Object.fromEntries(
+                            GROUPS[group].map((key) => [key, saved[key]]),
+                          ) } : current);
+                          notify(group);
+                        }}>撤回更改</Button>
+                        <Button size="sm" variant="primary" loading={saving[group]} onClick={() => save(group)}>
+                          {group === "ai" ? "保存模型" : group === "record" ? "保存记录设置" : "保存邮件设置"}
+                        </Button>
+                      </>}
+                    </div>
+                  )}
+                </>;
+                if (advanced) return (
+                  <details key={section.id} className="df-settings-section">
+                    <summary>
+                      {heading}
+                      <LineIcon name="chevron-down" size={15} className="df-disclosure-chevron" />
+                    </summary>
+                    {content}
+                  </details>
+                );
+                return <section key={section.id} id={`settings-${section.id}`} className="df-settings-section">
+                  <h3>{heading}</h3>
+                  {content}
+                </section>;
+              })
+            ) : null}
+          </LoadingHandoff>
+        </div>
       </div>
     </div>
   );
@@ -661,7 +798,7 @@ function SystemSection({ isRecording }: { isRecording: boolean }) {
             }}
           >
             {!autostart?.available ? "安装版可设置登录自启" : autostart.enabled
-              ? "登录 Windows 后在托盘启动，已配置模型时自动录制" : "关闭后需要手动打开"}
+              ? "登录 Windows 后在托盘启动，并按当前模式自动开始记录" : "关闭后需要手动打开"}
           </div>
         </div>
         <Toggle
@@ -774,45 +911,57 @@ function StorageSection({ isRecording }: { isRecording: boolean }) {
     }
   };
 
-  if (!info) return loadFailed
-    ? <Button onClick={load}>重试读取存储</Button>
-    : <p role="status">正在读取存储</p>;
-
-  const removable = info.removableCount ?? 0;
-  const pct = Math.min(100, info.percent);
+  const removable = info?.removableCount ?? 0;
+  const pct = Math.min(100, info?.percent ?? 0);
   return (
-    <div className="df-edit-fields">
-      <div>
-        <p className="df-settings-description">录制片段占用 {info.usedMb} MB，上限 {info.limitGb} GB</p>
-        <div role="progressbar" aria-label="录制片段占用" aria-valuemin={0} aria-valuemax={100}
-          aria-valuenow={pct} style={{ height: 8, background: "var(--bg-sunken)", borderRadius: "var(--radius-full)", overflow: "hidden" }}>
-          <div className="df-fill" style={{ background: pct >= 90 ? "var(--warning)" : "var(--accent)", transform: `scaleX(${pct / 100})` }} />
-        </div>
-      </div>
-      <p className="df-settings-description">{isRecording
-        ? "录制结束后可清理临时文件。"
-        : removable > 0 ? `有 ${removable} 个临时文件可以清理。` : "待分析的片段会自动保留，当前无需清理。"}
-      </p>
-      {!isRecording && removable > 0 && <div>
-        <Button onClick={() => { setNotice(null); setClosing(false); setConfirming(true); }}>清理临时文件</Button>
-      </div>}
-      {notice && (!confirming || closing) && (
-        <p className="df-feedback" role={notice.kind === "err" ? "alert" : "status"}
-          data-error={notice.kind === "err" || undefined}>{notice.text}</p>
-      )}
-      {confirming && (
-        <Dialog open={!closing} labelledBy="storage-clean-title"
-          onClose={() => { if (!busy) setClosing(true); }} onExited={() => setConfirming(false)}>
-          <h3 id="storage-clean-title">清理临时文件？</h3>
-          <p>清理后，这些文件无法找回。待分析的片段、活动记录和日报会保留。</p>
-          {!closing && notice?.kind === "err" && <p role="alert" data-error="true">{notice.text}</p>}
-          <div className="df-setting-actions">
-            <Button disabled={busy} onClick={() => setClosing(true)}>取消</Button>
-            <Button variant="danger" disabled={isRecording} loading={busy} onClick={clear}>确认清理</Button>
+    <LoadingHandoff
+      loading={!info && !loadFailed}
+      skeleton={<p className="df-settings-description" role="status">正在读取存储…</p>}
+    >
+      {!info ? (
+        <Button onClick={load}>重试读取存储</Button>
+      ) : (
+        <div className="df-edit-fields">
+          <div>
+            <p className="df-settings-description">录制片段占用 {info.usedMb} MB，上限 {info.limitGb} GB</p>
+            <div role="progressbar" aria-label="录制片段占用" aria-valuemin={0} aria-valuemax={100}
+              aria-valuenow={pct} style={{ height: 8, background: "var(--bg-sunken)", borderRadius: "var(--radius-full)", overflow: "hidden" }}>
+              <div className="df-fill" style={{ background: pct >= 90 ? "var(--warning)" : "var(--accent)", transform: `scaleX(${pct / 100})` }} />
+            </div>
           </div>
-        </Dialog>
+          <p className="df-settings-description">{isRecording
+            ? "录制结束后可清理临时文件。"
+            : removable > 0 ? `有 ${removable} 个临时文件可以清理。` : "待分析的片段会自动保留，当前无需清理。"}
+          </p>
+          {!isRecording && removable > 0 && <div>
+            <Button onClick={() => { setNotice(null); setClosing(false); setConfirming(true); }}>清理临时文件</Button>
+          </div>}
+          {notice && (!confirming || closing) && (
+            <p className="df-feedback" role={notice.kind === "err" ? "alert" : "status"}
+              data-error={notice.kind === "err" || undefined}>{notice.text}</p>
+          )}
+          {confirming && (
+            <Dialog open={!closing} labelledBy="storage-clean-title"
+              onClose={() => { if (!busy) setClosing(true); }} onExited={() => setConfirming(false)}>
+              <DialogHeader
+                id="storage-clean-title"
+                title="清理临时文件？"
+                description="清理后这些文件无法找回；待分析片段、活动记录和日报会保留。"
+              />
+              {!closing && notice?.kind === "err" && (
+                <DialogBody>
+                  <p role="alert" className="df-feedback" data-error="true">{notice.text}</p>
+                </DialogBody>
+              )}
+              <DialogFooter>
+                <Button disabled={busy} onClick={() => setClosing(true)}>取消</Button>
+                <Button variant="danger" disabled={isRecording} loading={busy} onClick={clear}>确认清理</Button>
+              </DialogFooter>
+            </Dialog>
+          )}
+        </div>
       )}
-    </div>
+    </LoadingHandoff>
   );
 }
 
@@ -855,8 +1004,8 @@ function AboutSection() {
       </div>
 
       <p style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", lineHeight: "var(--leading-normal)" }}>
-        录屏切片只保存在本机，仅提取关键帧发送给配置的视觉模型进行分析。
-        分析结果存放在本地 SQLite 数据库。
+        默认仅在本机记录应用与用时，不截取屏幕；开启截图分析后，录屏切片仅保存在本机并只发送关键帧。
+        所有活动结果均存放在本地 SQLite 数据库。
       </p>
     </div>
   );

@@ -12,19 +12,20 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, Stats, api } from "@/lib/api";
 import {
+  categoryGlyph,
   categoryPatternId,
   categoryVar,
   formatMinutes,
   fullDate,
   scoreVar,
 } from "@/lib/format";
-import { Button, Card, EmptyState, SectionTitle, Spinner } from "@/components/ui";
+import { Badge, Button, Card, ChartPopover, EmptyState, SectionTitle, SegmentedControl, Spinner } from "@/components/ui";
+import { LineIcon } from "@/components/LineIcon";
 import { LoadingHandoff } from "@/components/LoadingHandoff";
 import { CategoryPatterns } from "@/components/CategoryPatterns";
 import { useIsPhone } from "@/lib/useMediaQuery";
-import { FocusRing } from "@/components/FocusRing";
 
-export function StatsPage() {
+export function StatsPage({ active = true }: { active?: boolean }) {
   // 类别形状的 pattern 定义挂在页面根部，全页图表共用
   const patterns = <CategoryPatterns />;
   const [days, setDays] = useState<7 | 30>(7);
@@ -35,19 +36,19 @@ export function StatsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
+  const hasData = useRef(false);
 
   const load = async (d: 7 | 30) => {
     const id = ++request.current;
-    /* 只在第一次加载时卸载整页。
-       之后切换周期时保留旧数据、压暗显示 ——
-       否则整页会被卸载重建，工具栏连同方向键焦点一起消失，
-       键盘用户按一次右箭头就被丢回 body。 */
-    if (data === null) setLoading(true);
+    if (!hasData.current) setLoading(true);
     else setRefreshing(true);
     setError(null);
     try {
       const next = await api.getStats(d);
-      if (id === request.current) setData(next);
+      if (id === request.current) {
+        hasData.current = true;
+        setData(next);
+      }
     } catch (e) {
       if (id === request.current) setError(e instanceof ApiError ? e.message : "加载失败");
     } finally {
@@ -59,9 +60,10 @@ export function StatsPage() {
   };
 
   useEffect(() => {
-    load(days);
+    if (!active) return;
+    void load(days);
     return () => { request.current++; };
-  }, [days]);
+  }, [days, active]);
 
   // Hook 必须在所有 early return 之前调用。
   // 放在后面时，加载中的那一帧会少一个 hook，React 抛
@@ -69,6 +71,7 @@ export function StatsPage() {
   const phone = useIsPhone();
 
   const m = data?.metrics;
+  const todayHours = m ? (m.todayMinutes ?? m.todayHours * 60) / 60 : 0;
 
   return (
     <div style={{ overflowY: "auto", height: "100%" }}>
@@ -82,11 +85,13 @@ export function StatsPage() {
       >
         <div className="df-toolbar-row">
           <h2 className="df-page-title">统计</h2>
-          <span
-            className="df-page-subtitle"
-            style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)" }}
-          >
-            {data && `${data.rangeStart} → ${data.rangeEnd}`}
+          <span className="df-page-subtitle df-stats-period">
+            <span className="df-stats-range" data-refreshing={refreshing || undefined}>
+              {data && `${data.rangeStart} → ${data.rangeEnd}`}
+            </span>
+            <span role="status" className="df-stats-refresh">
+              {refreshing ? "正在更新统计…" : ""}
+            </span>
           </span>
           <div className="df-toolbar-spacer" />
           <Segmented
@@ -103,25 +108,15 @@ export function StatsPage() {
 
       <LoadingHandoff loading={loading}
         skeleton={<div className="df-wait"><Spinner />正在加载统计</div>}>
-      {error && !data ? (
-        <EmptyState icon="⚠️" title="统计数据加载失败" description={error}
+      {error && (!data || !m || m.activityCount === 0) ? (
+        <EmptyState icon={<LineIcon name="alert" size={36} />} title="统计数据加载失败" description={error}
           action={<Button onClick={() => load(days)}>重试</Button>} />
       ) : !data || !m || m.activityCount === 0 ? (
-        <EmptyState icon="◔" title={`最近 ${data?.days ?? days} 天没有活动记录`}
-          description="开始录制后，这里会显示时间分布、专注趋势和应用使用排行。" />
+        <EmptyState icon={<LineIcon name="chart" size={36} />} title={`最近 ${data?.days ?? days} 天没有活动记录`}
+          description="开始记录后，这里会显示时间分布、专注趋势和应用使用排行。" />
       ) : (
       <div
-        className="df-content-pad"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "var(--space-6)",
-          /* 重新取数时压暗旧内容，而不是卸载它。
-             卸载会让整页高度塌陷再撑开，滚动位置也跟着跳。 */
-          opacity: refreshing ? 0.72 : 1,
-          transition: "opacity var(--dur-base) var(--ease-out)",
-          pointerEvents: refreshing ? "none" : undefined,
-        }}
+        className="df-stats-container"
         aria-busy={refreshing || undefined}
       >
         {error && (
@@ -130,40 +125,56 @@ export function StatsPage() {
             <Button size="sm" onClick={() => load(days)}>重试</Button>
           </div>
         )}
-        <Card>
-          <SectionTitle action={<span className="u-tabular">{m.todayHours} / {data.dailyGoal || 8} 小时</span>}>今日目标</SectionTitle>
-          <div role="progressbar" aria-label="今日目标" aria-valuemin={0} aria-valuemax={data.dailyGoal || 8}
-            aria-valuenow={Math.min(m.todayHours, data.dailyGoal || 8)}
-            style={{ height: 8, borderRadius: "var(--radius-full)", overflow: "hidden", background: "var(--bg-sunken)" }}>
-            <div className="df-fill" style={{ background: "var(--accent)", transform: `scaleX(${Math.min(1, m.todayHours / (data.dailyGoal || 8))})` }} />
+
+        {/* ── 今日目标条（精简横幅） ─────────────────── */}
+        <Card className="df-goal-banner">
+          <div className="df-goal-banner-head">
+            <div className="df-goal-banner-title">
+              <span className="df-goal-banner-label">今日目标</span>
+              <span className="df-goal-banner-nums u-tabular">
+                {formatMinutes(m.todayMinutes ?? m.todayHours * 60)}
+                <span className="df-goal-banner-target"> / {data.dailyGoal || 8} 小时</span>
+              </span>
+            </div>
+            <Badge tone={todayHours >= (data.dailyGoal || 8) ? "success" : "accent"} className="u-tabular">
+              {Math.min(100, Math.round((todayHours / (data.dailyGoal || 8)) * 100))}%
+            </Badge>
+          </div>
+          <div
+            role="progressbar"
+            aria-label="今日目标"
+            aria-valuemin={0}
+            aria-valuemax={data.dailyGoal || 8}
+            aria-valuenow={Math.min(todayHours, data.dailyGoal || 8)}
+            className="df-goal-track"
+          >
+            <div className="df-fill" style={{
+              background: todayHours >= (data.dailyGoal || 8) ? "var(--success)" : "var(--accent)",
+              transform: `scaleX(${Math.min(1, todayHours / (data.dailyGoal || 8))})`,
+            }} />
           </div>
         </Card>
-        {/* ── 指标卡 ─────────────────────────────── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: "var(--space-4)",
-          }}
-        >
+
+        {/* ── 4 枚核心 KPI 指标卡（宽屏 4 列 / 中屏 2×2 / 窄屏 1 列） ── */}
+        <div className="df-kpi-grid">
           <Metric
             label="总时长"
-            value={`${m.totalHours}`}
-            unit="小时"
+            value={formatMinutes(m.totalMinutes ?? m.totalHours * 60)}
+            unit=""
             change={data.changes.totalHours}
             color="var(--cat-work)"
           />
           <Metric
             label="平均生产力"
-            value={`${m.avgScore}`}
-            unit="分"
-            change={data.changes.avgScore}
-            color={`var(${scoreVar(m.avgScore)})`}
+            value={m.avgScore > 0 ? `${m.avgScore}` : "暂无评分"}
+            unit={m.avgScore > 0 ? "分" : ""}
+            change={m.avgScore > 0 ? data.changes.avgScore : 0}
+            color={m.avgScore > 0 ? `var(${scoreVar(m.avgScore)})` : "var(--text-tertiary)"}
           />
           <Metric
             label="深度工作"
-            value={`${m.deepWork}`}
-            unit="段"
+            value={formatMinutes(m.deepWorkMinutes ?? 0)}
+            unit=""
             hint="单段 ≥ 60 分钟"
             change={data.changes.deepWork}
             color="var(--cat-study)"
@@ -178,48 +189,34 @@ export function StatsPage() {
         </div>
 
         {/* ── 分布 + 趋势 ────────────────────────── */}
-        <div
-          className="df-chart-grid df-chart-grid-a"
-          style={{
-            display: "grid",
-            gap: "var(--space-4)",
-            alignItems: "start",
-          }}
-        >
+        <div className="df-chart-grid-a df-chart-row">
           <Card>
-            <SectionTitle>类别分布</SectionTitle>
+            <SectionTitle action={<span className="df-section-meta">按累计时长</span>}>类别分布</SectionTitle>
             <Donut data={data.categories} total={m.totalHours * 60} />
           </Card>
 
           <Card>
-            <SectionTitle>生产力趋势</SectionTitle>
+            <SectionTitle action={<span className="df-section-meta">悬停查看明细</span>}>生产力趋势</SectionTitle>
             <Trend data={data.trend} />
           </Card>
         </div>
 
-        {/* ── 贡献日历 + 热力 ─────────────────────── */}
-        <div
-          className="df-chart-grid df-chart-grid-b"
-          style={{
-            display: "grid",
-            gap: "var(--space-4)",
-            alignItems: "start",
-          }}
-        >
+        {/* ── 贡献日历 + 时段分布 ────────────────── */}
+        <div className="df-chart-grid-b df-chart-row">
           <Card>
-            <SectionTitle>每日投入</SectionTitle>
+            <SectionTitle action={<span className="df-section-meta">每日投入热力</span>}>每日投入</SectionTitle>
             <Calendar data={data.calendar} />
           </Card>
 
           <Card>
-            <SectionTitle>时段分布</SectionTitle>
+            <SectionTitle action={<span className="df-section-meta">00:00 – 23:59</span>}>时段分布</SectionTitle>
             <Hourly data={data.hourly} />
           </Card>
         </div>
 
         {/* ── 应用排行 ────────────────────────────── */}
         <Card>
-          <SectionTitle>应用使用排行</SectionTitle>
+          <SectionTitle action={<span className="df-section-meta">Top 10</span>}>应用使用排行</SectionTitle>
           <AppRanking data={data.appRanking} />
         </Card>
       </div>
@@ -280,15 +277,10 @@ function Metric({
       </div>
 
       {change !== undefined && Math.abs(change) > 0.1 && (
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: "var(--text-xs)",
-            // 涨跌用「箭头 + 文字」而不是只靠颜色
-            color: up ? "var(--success)" : "var(--danger)",
-          }}
-        >
-          {up ? "↑" : "↓"} {Math.abs(change).toFixed(0)}% 较上一周期
+        <div style={{ marginTop: 8 }}>
+          <Badge tone={up ? "success" : "danger"} className="df-value-change u-tabular">
+            {up ? "↑" : "↓"} {Math.abs(change).toFixed(0)}% 较上一周期
+          </Badge>
         </div>
       )}
       {hint && (
@@ -309,6 +301,7 @@ function Donut({
   data: { name: string; minutes: number }[];
   total: number;
 }) {
+  const [hovered, setHovered] = useState<string | null>(null);
   const size = 168;
   const stroke = 22;
   const r = (size - stroke) / 2;
@@ -317,10 +310,12 @@ function Donut({
   let offset = 0;
   const arcs = data.map((d) => {
     const frac = total > 0 ? d.minutes / total : 0;
-    const arc = { ...d, dash: frac * c, offset };
+    const arc = { ...d, frac, dash: frac * c, offset };
     offset += frac * c;
     return arc;
   });
+
+  const activeArc = hovered ? arcs.find((a) => a.name === hovered) ?? null : null;
 
   return (
     <div
@@ -330,6 +325,7 @@ function Donut({
         gap: "var(--space-5)",
         flexWrap: "wrap",
       }}
+      onMouseLeave={() => setHovered(null)}
     >
       <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
         <svg width={size} height={size} role="img" aria-label="类别分布环形图">
@@ -341,25 +337,26 @@ function Donut({
             stroke="var(--bg-sunken)"
             strokeWidth={stroke}
           />
-          {arcs.map((a) => (
-            <circle
-              key={a.name}
-              cx={size / 2}
-              cy={size / 2}
-              r={r}
-              fill="none"
-              stroke={`var(${categoryVar(a.name)})`}
-              strokeWidth={stroke}
-              strokeDasharray={`${a.dash} ${c - a.dash}`}
-              strokeDashoffset={-a.offset}
-              // 起点在 12 点方向，顺时针
-              transform={`rotate(-90 ${size / 2} ${size / 2})`}
-            >
-              <title>
-                {a.name}：{formatMinutes(a.minutes)}
-              </title>
-            </circle>
-          ))}
+          {arcs.map((a) => {
+            const dimmed = hovered !== null && hovered !== a.name;
+            return (
+              <circle
+                key={a.name}
+                className="df-donut-arc"
+                cx={size / 2}
+                cy={size / 2}
+                r={r}
+                fill="none"
+                stroke={`var(${categoryVar(a.name)})`}
+                strokeWidth={stroke}
+                strokeDasharray={`${a.dash} ${c - a.dash}`}
+                strokeDashoffset={-a.offset}
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+                style={{ opacity: dimmed ? 0.3 : 1 }}
+                onMouseEnter={() => setHovered(a.name)}
+              />
+            );
+          })}
         </svg>
         <div
           style={{
@@ -369,32 +366,46 @@ function Donut({
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
+            pointerEvents: "none",
           }}
         >
           <span
             className="u-tabular"
-            style={{ fontSize: "var(--text-xl)", fontWeight: "var(--weight-semibold)" }}
+            style={{ fontSize: "var(--text-md)", fontWeight: "var(--weight-semibold)" }}
           >
-            {data.length}
+            {activeArc ? formatMinutes(activeArc.minutes) : data.length}
           </span>
           <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
-            个类别
+            {activeArc
+              ? `${categoryGlyph(activeArc.name)} ${activeArc.name} · ${Math.round(activeArc.frac * 100)}%`
+              : "个类别"}
           </span>
         </div>
       </div>
 
-      <Legend items={data.map((d) => ({
-        label: d.name,
-        value: formatMinutes(d.minutes),
-        color: `var(${categoryVar(d.name)})`,
-      }))} />
+      <Legend
+        hovered={hovered}
+        onHover={setHovered}
+        items={data.map((d) => ({
+          label: d.name,
+          value: formatMinutes(d.minutes),
+          color: `var(${categoryVar(d.name)})`,
+        }))}
+      />
     </div>
   );
 }
 
 // ── 趋势折线 ──────────────────────────────────────────────────
 
+function chartAnchor(element: Element) {
+  const chart = element.closest(".df-chart-wrap")!.getBoundingClientRect();
+  const point = element.getBoundingClientRect();
+  return { xPct: (point.left + point.width / 2 - chart.left) / chart.width * 100, yPx: point.top - chart.top };
+}
+
 function Trend({ data }: { data: { date: string; score: number; hours: number }[] }) {
+  const [hovered, setHovered] = useState<({ index: number } & ReturnType<typeof chartAnchor>) | null>(null);
   const w = 460;
   const h = 150;
   const pad = { t: 12, r: 12, b: 24, l: 30 };
@@ -423,8 +434,20 @@ function Trend({ data }: { data: { date: string; score: number; hours: number }[
     pad.t + (1 - v / maxScore) * (h - pad.t - pad.b),
   ];
 
+  const activeDatum = hovered ? data[hovered.index] : null;
+
   return (
-    <div>
+    <div className="df-chart-wrap" onMouseLeave={() => setHovered(null)}>
+      {activeDatum && hovered && (
+        <ChartPopover
+          xPct={hovered.xPct}
+          yPx={hovered.yPx}
+          title={fullDate(activeDatum.date)}
+          value={`${activeDatum.score} 分`}
+          meta={`${activeDatum.hours} 小时`}
+          color={`var(${scoreVar(activeDatum.score)})`}
+        />
+      )}
       <svg
         viewBox={`0 0 ${w} ${h}`}
         width="100%"
@@ -485,11 +508,26 @@ function Trend({ data }: { data: { date: string; score: number; hours: number }[
               {indices.map((i) => {
                 const [x, y] = pt(i, data[i].score);
                 return (
-                  <circle key={data[i].date} cx={x} cy={y} r={3} fill="var(--accent)" stroke="var(--bg-surface)" strokeWidth={1.2}>
-                    <title>
-                      {data[i].date}：{data[i].score} 分 / {data[i].hours} 小时
-                    </title>
-                  </circle>
+                  <g
+                    key={data[i].date}
+                    onMouseEnter={(event) => setHovered({ index: i, ...chartAnchor(event.currentTarget) })}
+                    onFocus={(event) => setHovered({ index: i, ...chartAnchor(event.currentTarget) })}
+                    onBlur={() => setHovered(null)}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${data[i].date}，${data[i].score} 分，${data[i].hours} 小时`}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <circle cx={x} cy={y} r={10} fill="transparent" />
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={hovered?.index === i ? 4 : 3}
+                      fill="var(--accent)"
+                      stroke="var(--bg-surface)"
+                      strokeWidth={1.5}
+                    />
+                  </g>
                 );
               })}
             </g>
@@ -531,21 +569,38 @@ function Calendar({
 }: {
   data: { date: string; hours: number; score: number; count: number }[];
 }) {
+  const [hovered, setHovered] = useState<({ index: number } & ReturnType<typeof chartAnchor>) | null>(null);
   const cell = 13;
   const gap = 3;
-  const weeks = Math.ceil(data.length / 7);
+  const weeks = Math.max(1, Math.ceil(data.length / 7));
   const maxH = Math.max(1, ...data.map((d) => d.hours));
 
-  const level = (hours: number) => {
-    if (hours <= 0) return "var(--bg-sunken)";
+  const opacityOf = (hours: number) => {
+    if (hours <= 0) return 0;
     const f = hours / maxH;
-    // 用 4 档透明度而不是连续色阶 —— 色阶在小方块上分辨不出
-    return `color-mix(in srgb, var(--success) ${Math.round(25 + f * 75)}%, var(--bg-sunken))`;
+    // 用 4 档离散透明度兼容 Chromium 105+，在小方块上也更易分辨
+    if (f <= 0.25) return 0.28;
+    if (f <= 0.5) return 0.52;
+    if (f <= 0.75) return 0.76;
+    return 1;
   };
 
+  const activeDay = hovered !== null ? data[hovered.index] : null;
+
   return (
-    <div>
+    <div className="df-chart-wrap" onMouseLeave={() => setHovered(null)}>
+      {activeDay && hovered && (
+        <ChartPopover
+          xPct={hovered.xPct}
+          yPx={hovered.yPx}
+          title={fullDate(activeDay.date)}
+          value={`${activeDay.hours} 小时`}
+          meta={`${activeDay.score} 分 · ${activeDay.count} 条活动`}
+          color="var(--success)"
+        />
+      )}
       <div
+        onScroll={() => setHovered(null)}
         style={{
           display: "grid",
           gridTemplateRows: `repeat(7, ${cell}px)`,
@@ -554,18 +609,39 @@ function Calendar({
           overflowX: "auto",
         }}
       >
-        {data.map((d) => (
-          <div
-            key={d.date}
-            title={`${fullDate(d.date)}\n${d.hours} 小时 · ${d.score} 分 · ${d.count} 条`}
-            style={{
-              width: cell,
-              height: cell,
-              borderRadius: 3,
-              background: level(d.hours),
-            }}
-          />
-        ))}
+        {data.map((d, idx) => {
+          const alpha = opacityOf(d.hours);
+          return (
+            <button
+              key={d.date}
+              type="button"
+              className="df-cal-cell"
+              aria-label={`${fullDate(d.date)}，${d.hours} 小时，${d.score} 分，${d.count} 条活动`}
+              onMouseEnter={(event) => setHovered({ index: idx, ...chartAnchor(event.currentTarget) })}
+              onFocus={(event) => setHovered({ index: idx, ...chartAnchor(event.currentTarget) })}
+              onBlur={() => setHovered(null)}
+              style={{
+                width: cell,
+                height: cell,
+                borderRadius: 3,
+                background: "var(--bg-sunken)",
+                overflow: "hidden",
+                padding: 0,
+              }}
+            >
+              {alpha > 0 && (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    background: "var(--success)",
+                    opacity: alpha,
+                  }}
+                />
+              )}
+            </button>
+          );
+        })}
       </div>
       <div
         style={{
@@ -578,19 +654,28 @@ function Calendar({
         }}
       >
         少
-        {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+        {[0, 0.28, 0.52, 0.76, 1].map((alpha) => (
           <div
-            key={f}
+            key={alpha}
             style={{
               width: 10,
               height: 10,
               borderRadius: 2,
-              background:
-                f === 0
-                  ? "var(--bg-sunken)"
-                  : `color-mix(in srgb, var(--success) ${Math.round(25 + f * 75)}%, var(--bg-sunken))`,
+              background: "var(--bg-sunken)",
+              overflow: "hidden",
             }}
-          />
+          >
+            {alpha > 0 && (
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  background: "var(--success)",
+                  opacity: alpha,
+                }}
+              />
+            )}
+          </div>
         ))}
         多
         <span style={{ marginLeft: "auto" }}>
@@ -604,40 +689,69 @@ function Calendar({
 // ── 时段热力 ──────────────────────────────────────────────────
 
 function Hourly({ data }: { data: { score: number; minutes: number }[][] }) {
+  const [hoveredHour, setHoveredHour] = useState<number | null>(null);
   const maxMin = Math.max(1, ...data.map((h) =>
     h.reduce((s, x) => s + x.minutes, 0)
   ));
+  const hoveredMins = hoveredHour !== null && data[hoveredHour]
+    ? data[hoveredHour].reduce((s, x) => s + x.minutes, 0)
+    : 0;
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(24, minmax(0, 1fr))",
-        gap: 2,
-        alignItems: "end",
-        height: 108,
-      }}
-      role="img"
-      aria-label="24 小时时段分布"
-    >
-      {data.map((hour, hi) => {
-        const mins = hour.reduce((s, x) => s + x.minutes, 0);
-        const h = Math.max(3, (mins / maxMin) * 76);
-        return (
-          <div key={hi} style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" }}>
-            <div
-              title={`${hi}:00 · ${formatMinutes(mins)}`}
+    <div className="df-chart-wrap" onMouseLeave={() => setHoveredHour(null)}>
+      {hoveredHour !== null && (
+        <ChartPopover
+          xPct={((hoveredHour + 0.5) / Math.max(1, data.length)) * 100}
+          yPx={32}
+          title={`${String(hoveredHour).padStart(2, "0")}:00 – ${String(hoveredHour).padStart(2, "0")}:59`}
+          value={hoveredMins > 0 ? formatMinutes(hoveredMins) : "无记录"}
+          color="var(--accent)"
+        />
+      )}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(24, minmax(0, 1fr))",
+          gap: 2,
+          alignItems: "end",
+          height: 108,
+        }}
+        role="img"
+        aria-label="24 小时时段分布"
+      >
+        {data.map((hour, hi) => {
+          const mins = hour.reduce((s, x) => s + x.minutes, 0);
+          // 纯 GPU scaleY 缩放（零 height 重排）
+          const ratio = mins > 0 ? Math.max(0.06, mins / maxMin) : 0.04;
+          const active = hoveredHour === hi;
+          return (
+            <button
+              key={hi}
+              type="button"
+              aria-label={`${hi}:00，${formatMinutes(mins)}`}
+              onMouseEnter={() => setHoveredHour(hi)}
+              onFocus={() => setHoveredHour(hi)}
+              onBlur={() => setHoveredHour(null)}
               style={{
-                height: h,
-                borderRadius: 3,
-                background:
-                  mins > 0 ? "var(--accent)" : "var(--bg-sunken)",
-                opacity: mins > 0 ? 0.4 + (mins / maxMin) * 0.6 : 1,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "flex-end",
+                height: 76,
+                padding: 0,
               }}
-            />
-          </div>
-        );
-      })}
+            >
+              <div
+                className="df-hourly-bar"
+                style={{
+                  transform: `scaleY(${ratio})`,
+                  background: mins > 0 ? "var(--accent)" : "var(--bg-sunken)",
+                  opacity: active ? 1 : mins > 0 ? 0.4 + (mins / maxMin) * 0.6 : 1,
+                }}
+              />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -710,55 +824,67 @@ function AppRanking({
 
 function Legend({
   items,
+  hovered,
+  onHover,
 }: {
   items: { label: string; value: string; color: string }[];
+  hovered?: string | null;
+  onHover?: (label: string | null) => void;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 140 }}>
-      {items.map((it) => (
-        <div key={it.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* 色块 + 形状：色盲下靠形状区分，不靠色相 */}
-          <svg
-            width="12"
-            height="12"
-            aria-hidden
-            style={{ flexShrink: 0 }}
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 140 }}>
+      {items.map((it) => {
+        const dimmed = hovered != null && hovered !== it.label;
+        return (
+          <div
+            key={it.label}
+            className="df-legend-row"
+            style={{ opacity: dimmed ? 0.45 : 1 }}
+            onMouseEnter={() => onHover?.(it.label)}
+            onMouseLeave={() => onHover?.(null)}
           >
-            <rect
-              x="0.5"
-              y="0.5"
-              width="11"
-              height="11"
-              rx="2.5"
-              fill={it.color}
-              stroke="var(--border-strong)"
-              strokeWidth="0.75"
-            />
-            <rect
-              x="1.5"
-              y="1.5"
-              width="9"
-              height="9"
-              rx="1.5"
-              fill={`url(#${categoryPatternId(it.label)})`}
-              color={it.color}
-            />
-          </svg>
-          <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>{it.label}</span>
-          <span
-            className="u-tabular"
-            style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
-          >
-            {it.value}
-          </span>
-        </div>
-      ))}
+            {/* 色块 + 形状：色盲下靠形状区分，不靠色相 */}
+            <svg
+              width="12"
+              height="12"
+              aria-hidden
+              style={{ flexShrink: 0 }}
+            >
+              <rect
+                x="0.5"
+                y="0.5"
+                width="11"
+                height="11"
+                rx="2.5"
+                fill={it.color}
+                stroke="var(--border-strong)"
+                strokeWidth="0.75"
+              />
+              <rect
+                x="1.5"
+                y="1.5"
+                width="9"
+                height="9"
+                rx="1.5"
+                fill={`url(#${categoryPatternId(it.label)})`}
+                color={it.color}
+              />
+            </svg>
+            <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>{it.label}</span>
+            <span
+              className="u-tabular"
+              style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
+            >
+              {it.value}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-/** 分段控件。role=tablist —— 所以必须支持左右方向键，
-    键盘用户不该靠 Tab 在两个选项间来回跳。 */
+/** 分段控件：复用统一滑动胶囊 SegmentedControl */
 export function Segmented({
   options,
   value,
@@ -770,72 +896,14 @@ export function Segmented({
   onChange: (v: string | number) => void;
   label: string;
 }) {
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    const dir = e.key === "ArrowRight" ? 1
-      : e.key === "ArrowLeft" ? -1
-      : 0;
-    if (dir === 0) return;
-    e.preventDefault();
-    const i = options.findIndex((o) => o.value === value);
-    // 到头就绕回，tablist 是个环
-    const next = (i + dir + options.length) % options.length;
-    onChange(options[next].value);
-    /* 必须等重渲染完再对焦。
-       onChange 触发后旧的 tab 会带着 tabIndex=-1 卸载、
-       新的才挂上，此刻 refs.current[next] 还是 null ——
-       实测焦点直接掉回了 body，键盘用户彻底失联。 */
-    requestAnimationFrame(() => refs.current[next]?.focus());
-  };
-
   return (
-    <div
-      role="tablist"
-      aria-label={label}
-      onKeyDown={onKeyDown}
-      style={{
-        display: "inline-flex",
-        padding: 2,
-        background: "var(--bg-sunken)",
-        borderRadius: "var(--radius-md)",
-        gap: 2,
-      }}
-    >
-      {options.map((o, i) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={String(o.value)}
-            ref={(el) => { refs.current[i] = el; }}
-            role="tab"
-            aria-selected={active}
-            /* tablist 里只有选中的那个能 Tab 进去，
-               其余用方向键走 —— 这是 APG 的标准模式 */
-            tabIndex={active ? 0 : -1}
-            onClick={() => onChange(o.value)}
-            /* 26px 高的分段按钮太小，纵向扩到 40px */
-            className="df-hit-v df-hit-v-4"
-            style={{
-              height: 26,
-              padding: "0 12px",
-              borderRadius: "var(--radius-sm)",
-              background: active ? "var(--bg-surface)" : "transparent",
-              color: active ? "var(--text-primary)" : "var(--text-tertiary)",
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--weight-medium)",
-              boxShadow: active ? "var(--shadow-sm)" : "none",
-              position: "relative",
-              touchAction: "manipulation",
-              transition: `background var(--dur-base) var(--ease-out),
-                          color var(--dur-base) var(--ease-out)`,
-            }}
-          >
-            {o.label}
-            <FocusRing />
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      roleMode="tablist"
+      compact
+      options={options}
+      value={value}
+      onChange={onChange}
+      label={label}
+    />
   );
 }

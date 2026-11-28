@@ -38,7 +38,12 @@ async function request<T>(
 
   let resp: Response;
   try {
-    const token = isTauri() ? await (session ??= invoke<string>("bridge_token")) : "";
+    const token = isTauri()
+      ? await (session ??= invoke<string>("bridge_token").catch((err) => {
+          session = undefined;
+          throw err;
+        }))
+      : "";
     resp = await fetch(`${BASE}${path}`, {
       ...init,
       signal,
@@ -107,6 +112,8 @@ export interface ActivityCard {
   summary: string;
   startTime: string | null;
   endTime: string | null;
+  displayStartTime?: string;
+  displayEndTime?: string;
   durationMinutes: number;
   productivityScore: number;
   appSites: AppSite[];
@@ -120,10 +127,13 @@ export interface Stats {
   rangeEnd: string;
   metrics: {
     totalHours: number;
+    totalMinutes: number;
     avgScore: number;
     deepWork: number;
+    deepWorkMinutes: number;
     activityCount: number;
     todayHours: number;
+    todayMinutes: number;
     todayScore: number;
   };
   changes: {
@@ -141,13 +151,33 @@ export interface Stats {
 }
 
 export interface RecordingState {
+  recordingMode?: "local" | "visual";
+  contextMode?: "app_only" | "structured";
+  refinementEnabled?: boolean;
   needsSetup: boolean;
   isRecording: boolean;
   isPaused: boolean;
   isIdlePaused: boolean;
+  isPrivacyPaused?: boolean;
+}
+
+export interface DailyReport {
+  date: string;
+  content: string;
+  localSummary: string;
+  supplement: string;
+  evidence: { id: number; title: string; start: string; end: string; minutes: number }[];
+  hasActivity: boolean;
+  canSupplement: boolean;
+  isStale: boolean;
+  isLegacy: boolean;
+  hasPrevious: boolean;
 }
 
 export interface Settings {
+  recording_mode: string;
+  local_context_mode: string;
+  local_ai_refinement: string;
   api_url: string;
   api_key: string;
   api_key_configured: boolean;
@@ -160,6 +190,7 @@ export interface Settings {
   chunks_max_size_gb: string;
   custom_chunks_dir: string;
   email_enabled: string;
+  email_ai_enrichment: string;
   email_sender: string;
   email_auth_code: string;
   email_receiver: string;
@@ -186,6 +217,8 @@ function normalizeCard(raw: unknown): ActivityCard {
     summary: c.summary ?? "",
     startTime: c.startTime ?? null,
     endTime: c.endTime ?? null,
+    displayStartTime: c.displayStartTime,
+    displayEndTime: c.displayEndTime,
     durationMinutes:
       typeof c.durationMinutes === "number" && Number.isFinite(c.durationMinutes)
         ? c.durationMinutes
@@ -237,13 +270,20 @@ export const api = {
     }),
 
   deleteCard: (id: number) =>
-    request<{ ok: boolean }>(`/api/cards/${id}`, { method: "DELETE" }),
+    request<{ ok: boolean; undoToken?: string }>(`/api/cards/${id}`, { method: "DELETE" }),
 
-  restoreCard: (card: ActivityCard) =>
+  restoreCard: (card: ActivityCard, undoToken?: string) =>
     request<{ ok: boolean }>("/api/cards/restore", {
       method: "POST",
-      body: JSON.stringify({ card }),
+      body: JSON.stringify({ card, undoToken }),
     }),
+
+  runRefinement: () =>
+    request<{ ok: boolean; claimed: number; committed: number; reason?: string }>(
+      "/api/refinement/run",
+      { method: "POST" },
+      120_000
+    ),
 
   /* 统计要聚合整段区间的记录，比普通读表慢，放宽到 30 秒。 */
   getStats: (days: 7 | 30) =>
@@ -262,9 +302,6 @@ export const api = {
 
   resumeRecording: () =>
     request<{ ok: boolean }>("/api/recording/resume", { method: "POST" }),
-
-  getProgress: () =>
-    request<{ pending: number; analyzing: boolean }>("/api/analysis/progress"),
 
   getSettings: () => request<Settings>("/api/settings/all"),
 
@@ -288,14 +325,17 @@ export const api = {
     request<{ dates: string[] }>("/api/reports/dates"),
 
   getReport: (date: string) =>
-    request<{ date: string; content: string; hasActivity: boolean }>(`/api/reports/${date}`),
+    request<DailyReport>(`/api/reports/${date}`),
 
   // 生成日报要把一天的记录喂给模型，分钟级。给 5 分钟，
   // 宁可让它慢，也不要生成到一半被判超时 —— 那样最浪费。
   generateReport: (date: string) =>
-    request<{ date: string; content: string }>(`/api/reports/${date}`, {
+    request<DailyReport>(`/api/reports/${date}`, {
       method: "POST",
     }, 300_000),
+
+  restoreReport: (date: string) =>
+    request<DailyReport>(`/api/reports/${date}/restore`, { method: "POST" }),
 
   getAutostart: () =>
     request<{ enabled: boolean; stale: boolean; available: boolean }>("/api/autostart"),
@@ -358,12 +398,6 @@ export const api = {
       dataDir: string;
       removableCount: number;
     }>("/api/storage/info"),
-
-  setCacheLimit: (gb: number) =>
-    request<{ ok: boolean; limitGb: number }>("/api/storage/cache-limit", {
-      method: "POST",
-      body: JSON.stringify({ gb }),
-    }),
 
   // 清缓存是批量删文件，可能慢
   clearChunks: () =>

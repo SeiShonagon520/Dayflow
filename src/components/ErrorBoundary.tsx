@@ -14,8 +14,6 @@ type Props = {
   children: ReactNode;
   /** 页面名，用于错误文案 */
   label?: string;
-  /** 错误后把边界复位，让用户能重试 */
-  onReset?: () => void;
 };
 
 type State = { error: Error | null };
@@ -35,7 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
 
-    const { label, onReset } = this.props;
+    const { label } = this.props;
 
     return (
       <div
@@ -86,10 +84,20 @@ export class ErrorBoundary extends Component<Props, State> {
         </code>
         <button
           type="button"
-          className="df-btn df-btn-primary df-hit-v"
+          className="df-btn df-hit-v"
+          data-variant="primary"
+          style={{
+            ["--df-button-bg" as string]: "var(--accent)",
+            color: "var(--text-on-accent)",
+            border: "1px solid var(--accent)",
+            height: 34,
+            padding: "0 14px",
+            borderRadius: "var(--radius-md)",
+            fontSize: "var(--text-sm)",
+            position: "relative",
+          }}
           onClick={() => {
             this.setState({ error: null });
-            onReset?.();
           }}
         >
           重新载入

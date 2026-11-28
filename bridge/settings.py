@@ -8,27 +8,46 @@ import config
 
 MASK = "********"
 SECRET_KEYS = {"api_key", "email_auth", "email_auth_code"}
+# 必须在当前设备显式授权的隐私/外发开关：备份导出与导入双向排除
+DEVICE_OPT_IN_KEYS = {"local_context_mode", "local_ai_refinement"}
+
 DEFAULTS = {
     "api_url": config.API_BASE_URL,
     "api_key": config.API_KEY,
     "api_model": config.API_MODEL,
     "theme": "light",
     "daily_goal": "8",
+    "recording_mode": "local",
+    "local_context_mode": "app_only",
+    "local_ai_refinement": "0",
     "record_output_idx": "0",
     "idle_pause_enabled": "1" if config.IDLE_PAUSE_ENABLED else "0",
     "idle_pause_timeout_min": str(config.IDLE_PAUSE_TIMEOUT_SECONDS // 60),
     "chunks_max_size_gb": str(config.CHUNKS_MAX_SIZE_GB),
     "custom_chunks_dir": config.CUSTOM_CHUNKS_DIR,
     "email_enabled": "0",
+    "email_ai_enrichment": "0",
     "email_sender": "",
     "email_auth_code": "",
     "email_receiver": "",
     "email_send_times": "12:00,22:00",
     "reduce_motion": "system",
 }
-RECORDING_KEYS = {"record_output_idx", "idle_pause_enabled", "idle_pause_timeout_min", "custom_chunks_dir"}
-LIMITS = {"record_output_idx": (-1, 63), "idle_pause_timeout_min": (1, 120),
-          "chunks_max_size_gb": (1, 500), "daily_goal": (1, 24)}
+# 注意：local_ai_refinement 故意不放入 RECORDING_KEYS，允许用户在录制过程中随时关停外发
+RECORDING_KEYS = {
+    "recording_mode",
+    "local_context_mode",
+    "record_output_idx",
+    "idle_pause_enabled",
+    "idle_pause_timeout_min",
+    "custom_chunks_dir",
+}
+LIMITS = {
+    "record_output_idx": (-1, 63),
+    "idle_pause_timeout_min": (1, 120),
+    "chunks_max_size_gb": (1, 500),
+    "daily_goal": (1, 24),
+}
 
 
 def email_times(value):
@@ -48,9 +67,13 @@ def read_settings(storage):
     with storage._get_connection() as conn:
         stored = dict(conn.execute("SELECT key, value FROM settings"))
     values = {**DEFAULTS, **{k: v for k, v in stored.items() if k in DEFAULTS}}
+    if values["recording_mode"] not in {"local", "visual"}:
+        values["recording_mode"] = "local"
+    if values["local_context_mode"] not in {"app_only", "structured"}:
+        values["local_context_mode"] = "app_only"
     if "email_auth_code" not in stored:
         values["email_auth_code"] = stored.get("email_auth", "")
-    for key in ("email_enabled", "idle_pause_enabled"):
+    for key in ("email_enabled", "email_ai_enrichment", "idle_pause_enabled", "local_ai_refinement"):
         values[key] = "1" if values[key].strip().lower() in {"1", "true", "on"} else "0"
     for key, (lo, hi) in LIMITS.items():
         try:
@@ -69,6 +92,13 @@ def updated_settings(current, patch):
     if patch.keys() - DEFAULTS.keys():
         raise ValueError("包含未知设置项")
     changes = {k: v.strip() for k, v in patch.items() if k not in SECRET_KEYS or v != MASK}
+    if "recording_mode" in changes and changes["recording_mode"] not in {"local", "visual"}:
+        raise ValueError("请选择有效的记录方式")
+    if "local_context_mode" in changes and changes["local_context_mode"] not in {"app_only", "structured"}:
+        raise ValueError("请选择有效的本机上下文粒度")
+    for bool_key in ("email_enabled", "email_ai_enrichment", "idle_pause_enabled", "local_ai_refinement"):
+        if bool_key in changes:
+            changes[bool_key] = "1" if changes[bool_key].lower() in {"1", "true", "on"} else "0"
     if "api_url" in changes:
         target = urlsplit(changes["api_url"])
         if target.scheme not in {"http", "https"} or not target.hostname:

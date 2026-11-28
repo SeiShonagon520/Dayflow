@@ -1,24 +1,17 @@
 [package]
 name = "dayflow"
-version = "1.7.1"
+version = "1.8.0"
 description = "AI 驱动的智能时间追踪与生产力分析工具"
 authors = ["Dayflow"]
 edition = "2021"
 rust-version = "1.77"
 
-[lib]
-name = "dayflow_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 

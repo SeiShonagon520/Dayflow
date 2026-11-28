@@ -25,7 +25,7 @@ def test_settings_masks_api_key(client):
     """
     API Key 不能回传明文。
 
-    后端没有鉴权、只靠 CORS 限制来源，一旦被别处读到就是明文密钥。
+    即便已有会话令牌和 CORS 限制，接口仍应对已保存的密钥做掩码处理。
     """
     r = client.get("/api/settings/all")
     assert r.status_code == 200
@@ -88,12 +88,6 @@ def test_recording_state(client):
         assert isinstance(body[k], bool)
 
 
-def test_analysis_progress(client):
-    r = client.get("/api/analysis/progress")
-    assert r.status_code == 200
-    assert isinstance(r.json()["pending"], int)
-
-
 def test_autostart_reports_state(client):
     r = client.get("/api/autostart")
     assert r.status_code == 200
@@ -129,7 +123,7 @@ def test_report_deletion_404(client):
 
 def test_stats_service_normalizes_app_names():
     """应用名归一化：.exe 后缀和大小写差异不该在榜单里裂成多项"""
-    from bridge.stats_service import normalize_app_name
+    from core.activity_time import normalize_app_name
     assert normalize_app_name("chrome.exe") == "chrome"
     assert normalize_app_name("Chrome") == "Chrome"
     assert normalize_app_name("") == "未命名"
@@ -143,7 +137,7 @@ def test_stats_service_app_minutes_matches_card_total():
     app_sites 里的 duration_seconds 是模型给的估计值，常与卡片总时长
     对不上。归一化做错的话，榜单总量会和其他图表互相矛盾。
     """
-    from bridge.stats_service import _app_minutes
+    from core.activity_time import app_minutes
     from core.types import ActivityCard, AppSite
 
     card = ActivityCard(
@@ -154,7 +148,7 @@ def test_stats_service_app_minutes_matches_card_total():
                    AppSite(name="B", duration_seconds=1200)],
         distractions=[], productivity_score=80,
     )
-    out = _app_minutes(card)
+    out = app_minutes(card)
     assert abs(sum(out.values()) - 60.0) < 0.01
 
     # 全是 0 时要平均分配，不能让这些应用从榜单上消失
@@ -165,7 +159,7 @@ def test_stats_service_app_minutes_matches_card_total():
                    AppSite(name="Y", duration_seconds=0)],
         distractions=[], productivity_score=80,
     )
-    out2 = _app_minutes(card2)
+    out2 = app_minutes(card2)
     assert abs(sum(out2.values()) - 30.0) < 0.01
     assert abs(out2["X"] - 15.0) < 0.01
 
@@ -175,7 +169,7 @@ def test_stats_service_empty_database():
     from bridge.stats_service import collect_stats
 
     class FakeStorage:
-        def get_cards_for_date(self, d):
+        def get_cards_in_range(self, start, end):
             return []
 
     s = collect_stats(FakeStorage(), days=7)

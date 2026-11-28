@@ -4,7 +4,6 @@ Dayflow Windows - 用户空闲检测模块
 """
 import logging
 import threading
-import time
 from ctypes import Structure, c_uint, c_uint64, sizeof, byref, windll
 from typing import Optional, Callable
 
@@ -46,10 +45,6 @@ class IdleDetector:
         self._is_idle = False
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-
-    @property
-    def is_idle(self) -> bool:
-        return self._is_idle
 
     def start(self):
         """启动空闲检测"""

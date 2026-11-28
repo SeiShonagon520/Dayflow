@@ -7,7 +7,7 @@ import logging
 import threading
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Callable, List, Dict
 
 import numpy as np
@@ -16,7 +16,7 @@ import cv2
 
 import config
 from core.types import VideoChunk, ChunkStatus
-from core.window_tracker import get_tracker, WindowInfo
+from core.window_tracker import get_tracker
 from core.privacy_filter import PrivacyFilter
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,11 @@ class ScreenRecorder:
         # 状态
         self._recording = False
         self._paused = False
+        self._privacy_paused = False
         self._camera: Optional[dxcam.DXCamera] = None
         self._record_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._pending_chunk: Optional[VideoChunk] = None
 
         # 多相机模式（全部屏幕）
         self._cameras: list = []
@@ -63,6 +65,7 @@ class ScreenRecorder:
         self._current_writer: Optional[cv2.VideoWriter] = None
         self._current_chunk_path: Optional[Path] = None
         self._current_chunk_start: Optional[datetime] = None
+        self._last_frame_at: Optional[datetime] = None
         self._frame_count = 0
         
         # 窗口追踪与隐私过滤
@@ -80,12 +83,19 @@ class ScreenRecorder:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    @property
+    def is_privacy_paused(self) -> bool:
+        return self._privacy_paused
     
     def start(self):
         """开始录制"""
         if self._recording:
             logger.warning("录制已在进行中")
             return
+        if self._record_thread and self._record_thread.is_alive():
+            raise RuntimeError("请等待上一次截图记录停止")
+        self._finalize_current_chunk()
 
         if self._all_screens:
             logger.info("开始屏幕录制... (全部屏幕模式)")
@@ -96,6 +106,7 @@ class ScreenRecorder:
         
         self._recording = True
         self._paused = False
+        self._privacy_paused = False
         self._stop_event.clear()
         
         # 启动录制线程
@@ -104,27 +115,30 @@ class ScreenRecorder:
         
         logger.info(f"录制已启动 - FPS: {self.fps}, 切片时长: {self.chunk_duration}秒")
     
-    def stop(self):
-        """停止录制"""
-        if not self._recording:
-            return
+    def stop(self, deadline=None):
+        """等待采集线程退出，确认切片已写入数据库，再报告停止成功。"""
         
         logger.info("停止屏幕录制...")
         
         self._stop_event.set()
         self._recording = False
+        self._privacy_paused = False
         
-        # 等待录制线程结束（缩短超时时间）
+        # 线程仍可访问相机和切片，超时后保留资源给下次停止重试。
         if self._record_thread and self._record_thread.is_alive():
-            self._record_thread.join(timeout=2)
+            wait = 2.0 if deadline is None else max(0.0, deadline - time.monotonic())
+            self._record_thread.join(timeout=wait)
             if self._record_thread.is_alive():
-                logger.warning("录制线程未能在超时内停止")
+                return False, "截图记录停止超时，请重试"
+        self._record_thread = None
         
         # 保存当前切片
+        error = None
         try:
             self._finalize_current_chunk()
         except Exception as e:
-            logger.error(f"保存切片时出错: {e}")
+            logger.error("保存截图切片失败: %s", type(e).__name__)
+            error = "截图记录尚未保存，请重试"
         
         # 释放 dxcam
         try:
@@ -143,7 +157,9 @@ class ScreenRecorder:
         except Exception as e:
             logger.error(f"释放相机时出错: {e}")
         
-        logger.info("录制已停止")
+        if error is None:
+            logger.info("录制已停止")
+        return error is None, error
     
     def pause(self):
         """暂停录制"""
@@ -254,11 +270,13 @@ class ScreenRecorder:
             return None
 
         canvas = np.zeros(self._canvas_shape, dtype=np.uint8)
+        has_frame = False
 
         for cam, geom in zip(self._cameras, self._output_geometries):
             frame = cam.grab()
             if frame is None:
                 continue
+            has_frame = True
 
             x = geom["left"] - self._canvas_offset_x
             y = geom["top"] - self._canvas_offset_y
@@ -271,7 +289,53 @@ class ScreenRecorder:
 
             canvas[y:y + h, x:x + w] = frame
 
-        return canvas
+        return canvas if has_frame else None
+
+    def _all_screens_safe(self) -> bool:
+        if not self._privacy_filter.enabled:
+            return True
+        bounds = {
+            (g["left"], g["top"], g["left"] + g["width"], g["top"] + g["height"])
+            for g in self._output_geometries
+        }
+        if not bounds or self._window_tracker.capture_monitor_bounds() != bounds:
+            return False
+        return self._visible_sensitivity(bounds) is False
+
+    def _grab_composite_safely(self):
+        # Check both sides of the grab so a window opened during capture is covered.
+        if self._all_screens_safe():
+            frame = self._grab_all_screens()
+            if self._all_screens_safe():
+                self._privacy_paused = False
+                return frame
+        self._privacy_paused = True
+        return None
+
+    def _visible_sensitivity(self, bounds):
+        windows = self._window_tracker.visible_windows(bounds)
+        if windows is None or any(not window.app_name or window.app_name.lower() == "unknown" for window in windows):
+            return None
+        return any(self._privacy_filter.is_sensitive(window) for window in windows)
+
+    def _grab_single_safely(self):
+        self._privacy_paused = False
+        if not self._privacy_filter.enabled:
+            return self._camera.grab()
+
+        bounds = self._window_tracker.capture_monitor_bounds()
+        before = self._visible_sensitivity(bounds) if bounds else None
+        if before is None or (before and self._privacy_filter.action == "pause"):
+            self._privacy_paused = True
+            return None
+        frame = self._camera.grab()
+        after = self._visible_sensitivity(bounds) if self._window_tracker.capture_monitor_bounds() == bounds else None
+        if after is None or (after and self._privacy_filter.action == "pause"):
+            self._privacy_paused = True
+            return None
+        # DXCam may fall back to a different output. Mask the entire frame if
+        # any visible window was sensitive and the selected policy allows masking.
+        return self._privacy_filter.mask_frame(frame) if before or after else frame
 
     def _recording_loop(self):
         """录制主循环"""
@@ -280,7 +344,15 @@ class ScreenRecorder:
         last_window_info = None  # 缓存上次窗口信息
         
         while not self._stop_event.is_set():
-            current_time = time.time()
+            current_time = time.monotonic()
+
+            if self._paused:
+                try:
+                    self._finalize_current_chunk()
+                except Exception as e:
+                    logger.warning("暂停时暂未保存截图切片: %s", type(e).__name__)
+                self._stop_event.wait(0.5)
+                continue
             
             # 控制帧率 - 使用精确等待而非轮询
             time_to_wait = frame_interval - (current_time - last_frame_time)
@@ -288,19 +360,26 @@ class ScreenRecorder:
                 self._stop_event.wait(min(time_to_wait, 0.5))  # 最多等待0.5秒，确保能响应停止信号
                 continue
             
-            # 暂停检查
-            if self._paused:
-                self._stop_event.wait(0.5)
-                continue
-            
             try:
-                # 捕获屏幕
                 if self._all_screens:
-                    frame = self._grab_all_screens()
+                    frame = self._grab_composite_safely()
                 else:
-                    frame = self._camera.grab()
+                    frame = self._grab_single_safely()
+                if self._privacy_paused:
+                    self._finalize_current_chunk()
+                    last_frame_time = current_time
+                    continue
+                if self._paused or self._stop_event.is_set():
+                    self._finalize_current_chunk()
+                    continue
                 if frame is None:
-                    time.sleep(0.1)
+                    # DXCam may return no new frame for a static desktop. Do not
+                    # destroy otherwise continuous recordings for a short gap.
+                    if self._last_frame_at and (
+                        datetime.now() - self._last_frame_at
+                    ).total_seconds() > 2 * frame_interval:
+                        self._finalize_current_chunk()
+                    last_frame_time = current_time
                     continue
                 
                 # 先采集窗口信息（在帧捕获时立即采集，确保时间对齐）
@@ -310,16 +389,18 @@ class ScreenRecorder:
                 # 隐私敏感检测与画面脱敏
                 is_sensitive = self._privacy_filter.is_sensitive(window_info)
                 if is_sensitive:
-                    if self._privacy_filter.action == "pause":
+                    if self._all_screens or self._privacy_filter.action == "pause":
                         # 隐私模式设为 pause 时，跳过敏感画面的录制
+                        self._privacy_paused = True
+                        self._finalize_current_chunk()
                         last_frame_time = current_time
                         continue
                     frame = self._privacy_filter.mask_frame(frame)
                 
                 # 检查是否需要创建新切片
-                if self._should_create_new_chunk():
+                if self._should_create_new_chunk(frame_capture_time):
                     self._finalize_current_chunk()
-                    self._create_new_chunk(frame.shape)
+                    self._create_new_chunk(frame.shape, frame_capture_time)
                     last_window_info = None  # 重置窗口缓存
                 
                 # 记录窗口信息（仅在窗口变化时记录，减少数据量）
@@ -347,6 +428,7 @@ class ScreenRecorder:
                 if self._current_writer:
                     self._current_writer.write(frame)
                     self._frame_count += 1
+                    self._last_frame_at = frame_capture_time
                 
                 last_frame_time = current_time
                 
@@ -354,18 +436,19 @@ class ScreenRecorder:
                 logger.error(f"录制帧错误: {e}")
                 time.sleep(1)
     
-    def _should_create_new_chunk(self) -> bool:
+    def _should_create_new_chunk(self, frame_time: datetime) -> bool:
         """检查是否需要创建新切片"""
         if self._current_chunk_start is None:
             return True
         
-        elapsed = (datetime.now() - self._current_chunk_start).total_seconds()
-        return elapsed >= self.chunk_duration
+        elapsed = (frame_time - self._current_chunk_start).total_seconds()
+        return elapsed < 0 or elapsed >= self.chunk_duration or (
+            self._last_frame_at is not None and (frame_time - self._last_frame_at).total_seconds() > 2 / self.fps
+        )
     
-    def _create_new_chunk(self, frame_shape: tuple):
+    def _create_new_chunk(self, frame_shape: tuple, timestamp: datetime):
         """创建新的视频切片"""
-        timestamp = datetime.now()
-        filename = f"chunk_{timestamp.strftime('%Y%m%d_%H%M%S')}.mp4"
+        filename = f"chunk_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.mp4"
         self._current_chunk_path = self.output_dir / filename
         self._current_chunk_start = timestamp
         self._frame_count = 0
@@ -386,13 +469,16 @@ class ScreenRecorder:
     
     def _finalize_current_chunk(self):
         """完成当前切片"""
+        self._save_pending_chunk()
         if self._current_writer is None:
             return
         
         self._current_writer.release()
+        if self._last_frame_at and (not self._current_chunk_path or not self._current_chunk_path.is_file()):
+            raise OSError("截图切片文件缺失")
         
-        if self._current_chunk_path and self._current_chunk_path.exists():
-            end_time = datetime.now()
+        if self._last_frame_at and self._current_chunk_path and self._current_chunk_path.exists():
+            end_time = min(datetime.now(), self._last_frame_at + timedelta(seconds=1 / self.fps))
             duration = (end_time - self._current_chunk_start).total_seconds()
             
             # 保存窗口记录到 JSON 文件
@@ -419,18 +505,22 @@ class ScreenRecorder:
             
             logger.info(f"切片已保存: {self._current_chunk_path.name} ({duration:.1f}秒, {self._frame_count}帧, {len(self._current_window_records)}条窗口记录)")
             
-            # 回调通知
-            if self.on_chunk_saved:
-                try:
-                    self.on_chunk_saved(chunk)
-                except Exception as e:
-                    logger.error(f"切片保存回调错误: {e}")
+            self._pending_chunk = chunk
         
         self._current_writer = None
         self._current_chunk_path = None
         self._current_chunk_start = None
+        self._last_frame_at = None
         self._frame_count = 0
         self._current_window_records = []
+        self._save_pending_chunk()
+
+    def _save_pending_chunk(self):
+        if self._pending_chunk is None:
+            return
+        if self.on_chunk_saved:
+            self.on_chunk_saved(self._pending_chunk)
+        self._pending_chunk = None
 
 
 class RecordingManager:
@@ -439,35 +529,41 @@ class RecordingManager:
     整合录制器和数据库存储，支持空闲自动暂停
     """
 
-    def __init__(self, storage_manager=None):
+    def __init__(self, storage_manager=None, mode="visual", *, context_mode=None, settings_gen_provider=None):
         from database.storage import StorageManager
         self.storage = storage_manager or StorageManager()
         try:
             output_idx = int(self.storage.get_setting("record_output_idx", "0"))
         except Exception:
             output_idx = 0
-        self.recorder = ScreenRecorder(on_chunk_saved=self._on_chunk_saved, output_idx=output_idx)
+        self.mode = mode
+        if mode == "local":
+            from core.local_recorder import LocalActivityRecorder
+            self.recorder = LocalActivityRecorder(
+                self.storage,
+                context_mode=context_mode,
+                settings_gen_provider=settings_gen_provider,
+            )
+        else:
+            self.recorder = ScreenRecorder(on_chunk_saved=self._on_chunk_saved, output_idx=output_idx)
 
         self._idle_paused = False
         self._idle_detector = None
 
     def _on_chunk_saved(self, chunk: VideoChunk):
         """切片保存回调 - 写入数据库"""
-        try:
-            chunk_id = self.storage.save_chunk(chunk)
-            logger.info(f"切片已入库: ID={chunk_id}")
-        except Exception as e:
-            logger.error(f"切片入库失败: {e}")
+        chunk_id = self.storage.save_chunk(chunk)
+        logger.info("切片已入库: ID=%s", chunk_id)
 
     def start_recording(self):
         """开始录制"""
         self.recorder.start()
         self._start_idle_detector()
 
-    def stop_recording(self):
-        """停止录制"""
+    def stop_recording(self, deadline=None):
+        """停止录制，返回最终保存确认和错误说明。"""
         self._stop_idle_detector()
-        self.recorder.stop()
+        return self.recorder.stop(deadline=deadline)
 
     def pause_recording(self):
         """暂停录制（手动）"""
@@ -490,6 +586,10 @@ class RecordingManager:
     @property
     def is_idle_paused(self) -> bool:
         return self._idle_paused
+
+    @property
+    def is_privacy_paused(self) -> bool:
+        return self.recorder.is_privacy_paused
 
     def _start_idle_detector(self):
         """启动空闲检测"""

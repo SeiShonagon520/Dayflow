@@ -19,7 +19,7 @@ export default defineConfig({
     strictPort: true,
     watch: {
       // Python 侧改动不需要触发前端热更新
-      ignored: ["**/core/**", "**/database/**", "**/bridge/**", "**/ui/**"],
+      ignored: ["**/core/**", "**/database/**", "**/bridge/**"],
     },
   },
 

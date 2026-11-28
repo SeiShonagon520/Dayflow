@@ -7,10 +7,10 @@ dxcam>=0.0.5
 # Video Processing
 opencv-python>=4.8.0
 
-# HTTP Client (async, HTTP/2 support)
-httpx[http2]>=0.25.0
+# HTTP Client (async)
+httpx>=0.25.0
 
-# Template Engine (for HTML dashboard)
+# Template Engine (for HTML dashboard & email report)
 Jinja2>=3.1.0
 
 # Windows API (for window tracking)
@@ -19,6 +19,3 @@ psutil>=5.9.0
 
 # Utilities
 numpy>=1.24.0
-
-# Testing
-pytest>=7.4.0

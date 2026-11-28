@@ -49,6 +49,10 @@ export function useRecording(ready: boolean, onError: (message: string | null) =
   };
 
   const trayAction = useLatest((action: string) => {
+    if (action === "quit-error") {
+      onError("退出前未能确认最终保存，请在托盘重试退出。");
+      return;
+    }
     if (action === "start" || action === "stop") return run(action);
     if (action === "pause" && state?.isRecording) {
       return run(state.isPaused || state.isIdlePaused ? "resume" : "pause");

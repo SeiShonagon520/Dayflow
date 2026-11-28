@@ -53,7 +53,7 @@ Dayflow is designed around **local recording + cloud analysis + local storage**.
    Raw recording chunks stay on your local machine.
 
 2. **Only a limited number of keyframes are sent for analysis**  
-   The current README describes up to 8 extracted frames per chunk being sent to the configured vision model.
+   Visual screenshot analysis prioritizes frames around window switches and sends at most 4 keyframes per chunk to the configured vision model. Local timing only stores app names and duration.
 
 3. **Analysis results are stored locally**  
    Activities, settings, and statistics are saved in a local SQLite database.
@@ -95,27 +95,27 @@ Dayflow is designed around **local recording + cloud analysis + local storage**.
 | ⏸️ **Pause recording** | Pause when handling sensitive content |
 | 🎨 **Theme switching** | Dark / light themes with saved preferences |
 
-## v1.7.1
+## v1.8.0
 
 Dayflow for Windows uses Tauri and React. The installer continues to use `%LOCALAPPDATA%\Dayflow\dayflow.db`, so existing activity, reports, and settings carry over. You can merge legacy JSON backups from Settings → Data import and export.
 
-Use the main window or system tray to start, pause, resume, or stop recording. Settings covers display selection, idle detection, chunk storage, scheduled and test email, HTML and CSV export, JSON backups, diagnostics, sign-in recording, and in-app installer updates.
+Use the main window or system tray to start, pause, resume, or stop tracking. Settings covers local timing vs. visual capture, display selection, idle detection, chunk storage, scheduled and test email, HTML and CSV export, JSON backups, diagnostics, sign-in auto-start, and in-app installer updates.
 
 ### Install
 
-Download the latest `Dayflow_<version>_x64-setup.exe` from [GitHub Releases](https://github.com/SeiShonagon520/Dayflow/releases). Dayflow supports Windows 10/11 x64. Configure a vision model endpoint on the first run.
+Download the latest `Dayflow_<version>_x64-setup.exe` from [GitHub Releases](https://github.com/SeiShonagon520/Dayflow/releases). Dayflow supports Windows 10/11 x64. Start with local application timing. Configure a model only when you want screenshot analysis or AI report commentary.
 
 ### Develop and build
 
 Install Node.js 22, stable Rust (MSVC), Visual Studio C++ Build Tools, the Windows SDK, and Python 3.10 or 3.11.
 
 ```powershell
-python -m pip install -r requirements.txt -r bridge/requirements.txt pyinstaller
+python -m pip install -r requirements.txt -r requirements-dev.txt -r bridge/requirements.txt pyinstaller
 npm ci
 .\start.bat
 ```
 
-Run `python -m pytest -q` for tests and `npm run build` to check the production frontend. Run `.\build.bat` to rebuild the Python sidecar and the Tauri NSIS installer.
+Run `python -m pytest -q` for backend tests and `npm run lint && npm test && npm run build` for React Hooks lint, frontend component tests, TypeScript, and the production bundle. Run `.\build.bat` to rebuild the Python sidecar and the Tauri NSIS installer.
 
 The installer is written to `src-tauri\target\release\bundle\nsis\`. Attach the matching `Dayflow_<version>_x64-setup.exe` to the GitHub Release. Windows CI builds the same installer after the test matrix passes.
 
@@ -138,7 +138,7 @@ Thanks to the original author for the creativity and open-source spirit.
 
 ## 📄 License
 
-[CC BY-NC-SA 4.0](LICENSE) © 2024-2025
+[CC BY-NC-SA 4.0](LICENSE) © 2024-2026
 
 This project currently uses **Creative Commons Attribution-NonCommercial-ShareAlike 4.0**.
 - ✅ You can learn from it, modify it, and share it

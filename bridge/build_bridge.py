@@ -1,17 +1,12 @@
 """
 把 bridge 打包成单文件 exe，供 Tauri 当 sidecar 拉起。
 
-开发时不需要跑这个 —— tauri dev 会直接用系统 python。
-只有 `tauri build` 打包时才需要。
-
     pip install pyinstaller
     python bridge/build_bridge.py
 
-产物：src-tauri/resources/python-bridge.exe，以及带有 Tauri 目标三元组后缀的 sidecar。
+产物：src-tauri/resources/python-bridge-<target-triple>.exe。
 """
-import os
 import platform
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,35 +14,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src-tauri" / "resources"
 
-# 收集 bridge 真正依赖的包。只装必需项能显著缩小体积。
+# uvicorn.run 通过字符串加载，PyInstaller 无法静态发现入口应用；
+# comtypes.gen.UIAutomationClient 在打包前预生成并显式打入，避免只读冻结环境无法动态生成绑定。
 HIDDEN = [
-    "uvicorn.logging",
-    "uvicorn.loops.auto",
-    "uvicorn.loops.asyncio",
-    "uvicorn.protocols.http.auto",
-    "uvicorn.protocols.http.h11_impl",
-    "uvicorn.protocols.websockets.auto",
-    "uvicorn.protocols.websockets.websockets_impl",
-    "uvicorn.lifespan.on",
-    "uvicorn.lifespan.off",
-    # fastapi / starlette / pydantic 都是被动态引用的，
-    # PyInstaller 静态分析看不见，必须显式声明
-    "fastapi",
-    "fastapi.routing",
-    "fastapi.middleware.cors",
-    "starlette.applications",
-    "starlette.responses",
-    "starlette.middleware.cors",
-    "starlette.routing",
-    "pydantic",
-    "pydantic.fields",
-    "pydantic.main",
-    "anyio",
-    "httptools",
-    "websockets",
-    "uvloop",
-    # uvicorn.run 通过字符串加载，PyInstaller 无法静态发现入口应用。
     "bridge.server",
+    "comtypes.gen.UIAutomationClient",
+]
+
+EXCLUDES = [
+    "pytest",
+    "tkinter",
+    "PySide6",
+    "PyQt6",
+    "PyQt5",
+    "matplotlib",
+    "scipy",
 ]
 
 
@@ -59,6 +40,13 @@ def main() -> int:
         return 1
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 预生成 UIAutomationCore COM 类型库绑定，确保随 onefile 包一起冻入
+    try:
+        import comtypes.client
+        comtypes.client.GetModule("UIAutomationCore.dll")
+    except Exception as exc:
+        print(f"提示: 预生成 UIA 类型库绑定跳过 ({exc})")
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -79,11 +67,14 @@ def main() -> int:
         "--collect-all", "starlette",
         "--collect-all", "pydantic",
         "--collect-all", "anyio",
+        "--collect-all", "comtypes",
         "--collect-submodules", "core",
         "--collect-submodules", "database",
     ]
     for h in HIDDEN:
         cmd += ["--hidden-import", h]
+    for mod in EXCLUDES:
+        cmd += ["--exclude-module", mod]
     # 入口是一个真正的 CLI，而不是让 Tauri 去跑 `python -m uvicorn`。
     # PyInstaller 的 onefile 会把入口脚本冻进 exe，之后再传
     # `-m uvicorn ...` 是不生效的 —— 参数会被忽略掉。
@@ -108,11 +99,11 @@ def main() -> int:
     suffixed = OUT_DIR / f"python-bridge-{arch}-pc-windows-msvc.exe"
 
     if exe.exists():
-        print(f"完成: {exe}  ({exe.stat().st_size / 1024 / 1024:.1f} MB)")
+        size_mb = exe.stat().st_size / 1024 / 1024
         if suffixed.exists():
             suffixed.unlink()
-        shutil.copy2(exe, suffixed)
-        print(f"已生成 Tauri 需要的名字: {suffixed.name}")
+        exe.replace(suffixed)
+        print(f"完成: {suffixed}  ({size_mb:.1f} MB)")
     else:
         print("没有找到产物，检查 PyInstaller 输出")
         return 1

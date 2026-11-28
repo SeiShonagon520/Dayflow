@@ -1,13 +1,24 @@
 /*
  * 基础 UI 组件
  *
- * 这些是「所有页面都该用同一套」的东西。目的是消除旧架构里的问题：
- * 那里每个按钮各自 setStyleSheet，改一次样式要翻十几个文件。
- *
- * 全部只用 token，不写死任何色值/像素值。
+ * 全部只用 token，不写死任何色值/像素值；
+ * 所有交互态和过渡统一收口到 CSS class，确保跟手、可打断且尊重 reduced-motion。
  */
 
-import { CSSProperties, ReactNode, forwardRef } from "react";
+import {
+  CSSProperties,
+  ReactNode,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { LineIcon } from "@/components/LineIcon";
+import { useSurfaceEnter } from "@/lib/motion";
 
 // ── Button ────────────────────────────────────────────────
 
@@ -19,12 +30,10 @@ interface ButtonProps {
   size?: ButtonSize;
   disabled?: boolean;
   loading?: boolean;
-  icon?: ReactNode;
   children?: ReactNode;
   onClick?: () => void;
   title?: string;
   fullWidth?: boolean;
-  type?: "button" | "submit";
   "aria-label"?: string;
 }
 
@@ -43,21 +52,18 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       size = "md",
       disabled,
       loading,
-      icon,
       children,
       onClick,
       title,
       fullWidth,
       "aria-label": ariaLabel,
-      type = "button",
     },
     ref
   ) {
     const palette: Record<ButtonVariant, CSSProperties & { "--df-button-bg": string }> = {
       primary: {
         "--df-button-bg": "var(--accent)",
-        // --on-accent 随主题翻转：亮色是白字，暗色是深蓝（压在亮蓝底上）
-        color: "var(--on-accent)",
+        color: "var(--text-on-accent)",
         border: "1px solid var(--accent)",
       },
       secondary: {
@@ -72,27 +78,20 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       },
       danger: {
         "--df-button-bg": "var(--danger-solid)",
-        // 白字压在深红填充上；--danger（亮）是给文字用的那个
-        color: "var(--text-on-accent)",
+        color: "#fff",
         border: "1px solid var(--danger-solid)",
       },
     };
 
-    // 按下反馈走 CSS class，不用 JS 改 style。
-    // 内联 style 会覆盖样式表里的 :active，导致 transform 永远不生效
-    // （实测按下中 transform 一直是 none）。
-    //
-    // 命中区：sm(28) 和 md(34) 都不够 40px，用伪元素补。
-    // lg(42) 已经达标，不用扩。
     const hit = size === "lg" ? "" : " df-hit-v";
     const cls =
-      `df-btn df-btn-${variant}${hit}` +
+      `df-btn${hit}` +
       `${disabled || loading ? " is-disabled" : ""}`;
 
     return (
       <button
         ref={ref}
-        type={type}
+        type="button"
         title={title}
         aria-label={ariaLabel}
         aria-busy={loading || undefined}
@@ -116,22 +115,18 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           lineHeight: 1,
           width: fullWidth ? "100%" : undefined,
           opacity: disabled ? 0.45 : 1,
-          /* 伪元素要定位得住 */
           position: "relative",
-          /* 触屏上双击缩放会延迟点击响应 */
           touchAction: "manipulation",
         }}
       >
         <span className="df-busy-content">
           <span className="df-button-label" data-hidden={loading || undefined}>
-            {icon}{children}
+            {children}
           </span>
-          {loading && <Spinner size={12} />}
+          <span className="df-busy-spinner" data-visible={loading || undefined} aria-hidden="true">
+            {loading && <Spinner size={12} />}
+          </span>
         </span>
-        {/* 焦点环的淡入层。必须是真的元素 ——
-            CSS 压缩器会把 ::focus-visible::after 压成单冒号形式，
-            Chrome 碰巧认，别的浏览器不认，实测就静默失效了。 */}
-        <span className="df-focus-ring" aria-hidden />
       </button>
     );
   }
@@ -150,84 +145,547 @@ export function Spinner({ size = 14 }: { size?: number }) {
         border: "2px solid currentColor",
         borderRightColor: "transparent",
         borderRadius: "50%",
-        opacity: 0.7,
+        opacity: 0.72,
       }}
     />
   );
 }
 
+// ── IconSwap ──────────────────────────────────────────────
+// 同位双态图标交叉淡化（纯 opacity + scale，零重排）
+
+export function IconSwap({
+  active,
+  first,
+  second,
+  size = 16,
+}: {
+  active: boolean;
+  first: ReactNode;
+  second: ReactNode;
+  size?: number;
+}) {
+  return (
+    <span
+      className="df-icon-swap"
+      data-swapped={active ? "true" : "false"}
+      aria-hidden="true"
+      style={{ width: size, height: size }}
+    >
+      <span className="df-icon-swap-a">{first}</span>
+      <span className="df-icon-swap-b">{second}</span>
+    </span>
+  );
+}
+
+// ── SegmentedControl ──────────────────────────────────────
+// Apple 风格滑动胶囊分段控件：等宽网格 + 纯 GPU transform 平移滑块，
+// 零布局重排、随时可打断、完整方向键漫游焦点支持。
+
+export function SegmentedControl<T extends string | number>({
+  options,
+  value,
+  onChange,
+  label,
+  roleMode = "tablist",
+  compact = false,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  label: string;
+  roleMode?: "tablist" | "radiogroup";
+  compact?: boolean;
+}) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const activeIndex = Math.max(0, options.findIndex((o) => o.value === value));
+  const itemRole = roleMode === "tablist" ? "tab" : "radio";
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const dir =
+      e.key === "ArrowRight" || (roleMode === "radiogroup" && e.key === "ArrowDown") ? 1
+      : e.key === "ArrowLeft" || (roleMode === "radiogroup" && e.key === "ArrowUp") ? -1
+      : 0;
+    if (dir === 0) return;
+    e.preventDefault();
+    const next = (activeIndex + dir + options.length) % options.length;
+    onChange(options[next].value);
+    requestAnimationFrame(() => refs.current[next]?.focus());
+  };
+
+  return (
+    <div
+      role={roleMode}
+      aria-label={label}
+      onKeyDown={onKeyDown}
+      className={`df-segmented${compact ? " is-compact" : ""}`}
+      style={
+        {
+          "--seg-count": options.length,
+          "--seg-index": activeIndex,
+        } as CSSProperties
+      }
+    >
+      <span aria-hidden className="df-segmented-thumb" />
+      {options.map((o, i) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={String(o.value)}
+            ref={(el) => { refs.current[i] = el; }}
+            type="button"
+            role={itemRole}
+            aria-selected={itemRole === "tab" ? active : undefined}
+            aria-checked={itemRole === "radio" ? active : undefined}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(o.value)}
+            className="df-hit-v df-segmented-item"
+            data-active={active ? "true" : "false"}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Card ──────────────────────────────────────────────────
-// 卡片不加阴影：层级靠表面明度差表达，加阴影在密集列表里会显脏。
 
 export function Card({
   children,
-  padded = true,
-  style,
+  variant = "surface",
   className,
+  style,
 }: {
   children: ReactNode;
-  padded?: boolean;
-  style?: CSSProperties;
+  variant?: "surface" | "inset" | "flush";
   className?: string;
+  style?: CSSProperties;
 }) {
   return (
     <div
-      className={className}
-      style={{
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border-subtle)",
-        borderRadius: "var(--radius-lg)",
-        padding: padded ? "var(--space-5)" : undefined,
-        ...style,
-      }}
+      className={`df-card ${className ?? ""}`.trim()}
+      data-variant={variant}
+      style={style}
     >
       {children}
     </div>
   );
 }
 
-// ── Badge ─────────────────────────────────────────────────
+export function CardHeader({
+  title,
+  description,
+  action,
+  icon,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  action?: ReactNode;
+  icon?: ReactNode;
+}) {
+  return (
+    <div className="df-card-head">
+      <div className="df-card-head-main">
+        <div className="df-card-title-row">
+          {icon}
+          <h3 className="df-card-title">{title}</h3>
+        </div>
+        {description && <p className="df-card-desc">{description}</p>}
+      </div>
+      {action && <div className="df-card-head-action">{action}</div>}
+    </div>
+  );
+}
+
+export function CardBody({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <div className={`df-card-body ${className ?? ""}`.trim()}>{children}</div>;
+}
+
+export function CardFooter({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <div className={`df-card-foot ${className ?? ""}`.trim()}>{children}</div>;
+}
+
+// ── Badge & MetaChip & Kbd ────────────────────────────────
 
 export function Badge({
   children,
   tone = "neutral",
-  color,
+  className,
 }: {
   children: ReactNode;
   tone?: "neutral" | "accent" | "success" | "warning" | "danger";
-  color?: string;
+  className?: string;
 }) {
-  const tones: Record<string, CSSProperties> = {
-    neutral: {
-      background: "var(--bg-sunken)",
-      color: "var(--text-secondary)",
-    },
-    // 文字用 accent-text（偏亮）而非 accent（偏暗，是按钮底色用的）
-    accent: {
-      background: "var(--accent-subtle)",
-      color: "var(--accent-text)",
-    },
-    success: { background: "var(--success-bg)", color: "var(--success)" },
-    warning: { background: "var(--warning-bg)", color: "var(--warning)" },
-    danger: { background: "var(--danger-bg)", color: "var(--danger)" },
-  };
   return (
-    <span
-      style={{
-        ...(color ? { background: "transparent", color } : tones[tone]),
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        height: 20,
-        padding: "0 8px",
-        borderRadius: "var(--radius-sm)",
-        fontSize: "var(--text-2xs)",
-        fontWeight: "var(--weight-semibold)",
-        whiteSpace: "nowrap",
-      }}
-    >
+    <span className={`df-badge ${className ?? ""}`.trim()} data-tone={tone}>
       {children}
     </span>
+  );
+}
+
+export function MetaChip({
+  children,
+  className,
+  title,
+}: {
+  children: ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <span className={`df-chip ${className ?? ""}`.trim()} title={title}>
+      {children}
+    </span>
+  );
+}
+
+export function Kbd({ children }: { children: ReactNode }) {
+  return <kbd className="df-kbd">{children}</kbd>;
+}
+
+// ── Tooltip ───────────────────────────────────────────────
+// 替代原生 title：Portal 挂载避免被 overflow:hidden 裁切，
+// 支持悬停与键盘聚焦双触发，纯 opacity + transform 过渡。
+
+export function Tooltip({
+  content,
+  placement = "top",
+  disabled = false,
+  children,
+}: {
+  content: ReactNode;
+  placement?: "top" | "bottom" | "right";
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ x: number; y: number } | null>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const timerRef = useRef<number | null>(null);
+  const tooltipId = useId();
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const updatePosition = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const gap = 8;
+    let x = rect.left + rect.width / 2;
+    let y = rect.top - gap;
+    if (placement === "bottom") {
+      y = rect.bottom + gap;
+    } else if (placement === "right") {
+      x = rect.right + gap;
+      y = rect.top + rect.height / 2;
+    }
+    x = Math.max(12, Math.min(window.innerWidth - 12, x));
+    y = Math.max(12, Math.min(window.innerHeight - 12, y));
+    setCoords({ x, y });
+  }, [placement]);
+
+  const show = (immediate: boolean) => {
+    if (disabled || !content) return;
+    clearTimer();
+    const run = () => {
+      updatePosition();
+      setOpen(true);
+    };
+    if (immediate) run();
+    else timerRef.current = window.setTimeout(run, 140);
+  };
+
+  const hide = useCallback(() => {
+    clearTimer();
+    setOpen(false);
+  }, [clearTimer]);
+
+  useEffect(() => () => clearTimer(), [clearTimer]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") hide();
+    };
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open, hide]);
+
+  useEffect(() => {
+    if (disabled && open) hide();
+  }, [disabled, open, hide]);
+
+  return (
+    <span
+      ref={triggerRef}
+      className="df-tooltip-trigger"
+      aria-describedby={open ? tooltipId : undefined}
+      onMouseEnter={() => show(false)}
+      onMouseLeave={hide}
+      onFocus={(event) => {
+        if (event.target.matches(":focus-visible")) show(true);
+      }}
+      onBlur={hide}
+      onPointerDown={hide}
+    >
+      {children}
+      {open && coords && createPortal(
+        <span
+          id={tooltipId}
+          role="tooltip"
+          className="df-tooltip"
+          data-placement={placement}
+          style={{ left: coords.x, top: coords.y }}
+        >
+          {content}
+        </span>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
+// ── NumberStepper ─────────────────────────────────────────
+// 借鉴 Rare UI Duration Picker 的步进结构，剥离弹跳物理，
+// 收口为 1px 发丝精密桌面步进器 + 可选快捷预设胶囊。
+
+export function NumberStepper({
+  id,
+  value,
+  onChange,
+  min,
+  max,
+  step = 1,
+  unit,
+  presets,
+  disabled,
+  ariaLabel,
+}: {
+  id?: string;
+  value: string | number;
+  onChange: (value: string) => void;
+  min: number;
+  max: number;
+  step?: number;
+  unit?: string;
+  presets?: number[];
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  const numeric = Number(value);
+  const valid = Number.isFinite(numeric);
+  const canDec = !disabled && (!valid || numeric > min);
+  const canInc = !disabled && (!valid || numeric < max);
+
+  const nudge = (delta: number) => {
+    const base = valid ? numeric : min;
+    const next = Math.max(min, Math.min(max, base + delta));
+    onChange(String(next));
+  };
+
+  return (
+    <div className="df-stepper-wrap">
+      <div className="df-stepper" data-disabled={disabled ? "true" : undefined}>
+        <button
+          type="button"
+          className="df-stepper-btn"
+          aria-label="减少"
+          disabled={!canDec}
+          onClick={() => nudge(-step)}
+        >
+          <LineIcon name="minus" size={14} />
+        </button>
+        <input
+          id={id}
+          type="number"
+          inputMode="numeric"
+          aria-label={ariaLabel}
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className="df-stepper-input u-tabular"
+        />
+        {unit && <span className="df-stepper-unit" aria-hidden="true">{unit}</span>}
+        <button
+          type="button"
+          className="df-stepper-btn"
+          aria-label="增加"
+          disabled={!canInc}
+          onClick={() => nudge(step)}
+        >
+          <LineIcon name="plus" size={14} />
+        </button>
+      </div>
+      {presets && presets.length > 0 && (
+        <div className="df-stepper-presets">
+          {presets.map((preset) => {
+            const active = valid && numeric === preset;
+            return (
+              <button
+                key={preset}
+                type="button"
+                disabled={disabled}
+                aria-pressed={active}
+                className="df-stepper-preset u-tabular"
+                onClick={() => onChange(String(preset))}
+              >
+                {preset}{unit ?? ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Toast ─────────────────────────────────────────────────
+// 统一全局报错（顶部通道）与限时撤销（底部通道）原语，
+// 零内联定位散落，共享 useExit 退场与悬停暂停倒计时语义。
+
+export const Toast = forwardRef<
+  HTMLDivElement,
+  {
+    variant?: "default" | "danger";
+    position?: "top" | "bottom";
+    closing?: boolean;
+    paused?: boolean;
+    countdownKey?: string | number;
+    reducedHint?: string;
+    icon?: ReactNode;
+    action?: ReactNode;
+    role?: "status" | "alert";
+    ariaLive?: "polite" | "assertive";
+    onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+    onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
+    onFocus?: React.FocusEventHandler<HTMLDivElement>;
+    onBlur?: React.FocusEventHandler<HTMLDivElement>;
+    children: ReactNode;
+  }
+>(function Toast(
+  {
+    variant = "default",
+    position = "bottom",
+    closing,
+    paused,
+    countdownKey,
+    reducedHint,
+    icon,
+    action,
+    role = variant === "danger" ? "alert" : "status",
+    ariaLive = variant === "danger" ? "assertive" : "polite",
+    onMouseEnter,
+    onMouseLeave,
+    onFocus,
+    onBlur,
+    children,
+  },
+  ref,
+) {
+  const posClass = position === "top" ? "df-error-toast" : "df-undo-toast";
+  const root = useRef<HTMLDivElement>(null);
+  useImperativeHandle(ref, () => root.current!, []);
+  useSurfaceEnter(root);
+  return createPortal(
+    <div
+      ref={root}
+      role={role}
+      aria-live={ariaLive}
+      data-closing={closing || undefined}
+      data-paused={paused || undefined}
+      data-variant={variant}
+      data-countdown={countdownKey !== undefined ? "true" : undefined}
+      className={`df-toast df-toast-shell ${posClass}`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onFocus={onFocus}
+      onBlur={onBlur}
+    >
+      {icon && <span className="df-toast-icon" aria-hidden="true">{icon}</span>}
+      <span className="df-toast-text">
+        {children}
+        {reducedHint && <span className="df-undo-reduced-hint">{reducedHint}</span>}
+      </span>
+      {action}
+      {countdownKey !== undefined && (
+        <span key={countdownKey} aria-hidden="true" className="df-undo-timer" />
+      )}
+    </div>,
+    document.body,
+  );
+});
+
+// ── ChartPopover ──────────────────────────────────────────
+// 统计图表统一悬浮读数卡（纯 CSS 定位与 GPU 过渡，自动贴边防溢出）
+
+export function ChartPopover({
+  xPct,
+  yPx,
+  title,
+  value,
+  meta,
+  color,
+  glyph,
+}: {
+  xPct: number;
+  yPx: number;
+  title: string;
+  value: string;
+  meta?: string;
+  color?: string;
+  glyph?: string;
+}) {
+  const align = xPct < 22 ? "left" : xPct > 78 ? "right" : "center";
+  return (
+    <div
+      className="df-chart-popover"
+      data-align={align}
+      style={{
+        left: `${Math.max(4, Math.min(96, xPct))}%`,
+        top: `${Math.max(0, yPx)}px`,
+      }}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="df-chart-popover-head">
+        {color && (
+          <span className="df-chart-popover-swatch" style={{ color }} aria-hidden="true">
+            {glyph ?? "●"}
+          </span>
+        )}
+        <span className="df-chart-popover-title">{title}</span>
+      </div>
+      <div className="df-chart-popover-value u-tabular">{value}</div>
+      {meta && <div className="df-chart-popover-meta u-tabular">{meta}</div>}
+    </div>
   );
 }
 
@@ -236,13 +694,11 @@ export function Badge({
 export const Field = ({
   label,
   hint,
-  error,
   children,
   htmlFor,
 }: {
   label: string;
   hint?: string;
-  error?: string;
   children: ReactNode;
   htmlFor?: string;
 }) => {
@@ -259,15 +715,7 @@ export const Field = ({
         {label}
       </label>
       {children}
-      {error ? (
-        <span
-          role="alert"
-          className="df-feedback"
-          style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}
-        >
-          {error}
-        </span>
-      ) : hint ? (
+      {hint ? (
         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
           {hint}
         </span>
@@ -284,31 +732,14 @@ export const Input = forwardRef<
     <input
       ref={ref}
       {...rest}
-      /* 字号交给 CSS 的 .df-field 管：写成内联就永远赢不了
-         窄屏媒体查询，375px 下实测仍是 13px。
-         用 !important 压制内联是错的 —— 从源头改。 */
       className={`df-field ${className ?? ""}`.trim()}
       style={{
-        /* 高度和字号都走 .df-field：内联 style 会赢过样式表，
-           窄屏的 16px 媒体查询就是这么失效的（实测 375px
-           下设置页输入框仍是 13px）。 */
         padding: "0 var(--space-3)",
         background: "var(--bg-surface)",
-        border: "1px solid var(--border-default)",
         borderRadius: "var(--radius-md)",
         color: "var(--text-primary)",
         touchAction: "manipulation",
-        transition: `border-color var(--dur-base) var(--ease-out),
-                    box-shadow var(--dur-base) var(--ease-out)`,
         ...style,
-      }}
-      onFocus={(e) => {
-        e.currentTarget.style.borderColor = "var(--accent)";
-        e.currentTarget.style.boxShadow = "0 0 0 3px var(--accent-ring)";
-      }}
-      onBlur={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.boxShadow = "none";
       }}
     />
   );
@@ -324,10 +755,8 @@ export const Select = forwardRef<
       {...rest}
       className={`df-field ${className ?? ""}`.trim()}
       style={{
-        /* 高度和字号都走 .df-field，理由同 Input。 */
         padding: "0 var(--space-3)",
         background: "var(--bg-surface)",
-        border: "1px solid var(--border-default)",
         borderRadius: "var(--radius-md)",
         color: "var(--text-primary)",
         cursor: "pointer",
@@ -340,7 +769,7 @@ export const Select = forwardRef<
   );
 });
 
-/** 开关。用 button 而不是 checkbox，才能自己控制外观和焦点环 */
+/** 开关：按住时向轨道内侧拉伸（左关向右伸、右开向左伸），不越出边界 */
 export function Toggle({
   checked,
   onChange,
@@ -360,10 +789,8 @@ export function Toggle({
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      /* 40×24 的开关纵向差 16px，需要 8px 以上的扩展。
-         通用 df-hit-v 给 8px，但父级的 overflow 会裁掉一部分，
-         实测只到 38px —— 用专用 class 补足。 */
-      className="df-hit-toggle"
+      className="df-hit-toggle df-toggle"
+      data-checked={checked ? "true" : "false"}
       style={{
         width: 40,
         height: 24,
@@ -372,17 +799,15 @@ export function Toggle({
         border: "1px solid",
         borderColor: checked ? "var(--accent)" : "var(--border-strong)",
         position: "relative",
-        transition: `background var(--dur-base) var(--ease-out),
-                    border-color var(--dur-base) var(--ease-out)`,
+        transition: `background var(--dur-fast) var(--ease-out),
+                    border-color var(--dur-fast) var(--ease-out)`,
         opacity: disabled ? 0.5 : 1,
         flexShrink: 0,
         touchAction: "manipulation",
       }}
     >
-      {/* 滑块只动 transform。之前动的是 left —— left 是布局属性，
-          每一帧都要重排，也违反本项目「只动 transform/opacity」的约定。
-          位置固定在 left:2，位移用 translateX 表示。 */}
       <span
+        className="df-toggle-knob"
         style={{
           position: "absolute",
           top: 2,
@@ -390,19 +815,13 @@ export function Toggle({
           width: 18,
           height: 18,
           borderRadius: "50%",
-          // 滑块跟着反色走：暗色主题开关闭时轨道是亮蓝，滑块要变深
-          background: checked ? "var(--on-accent)" : "var(--bg-surface)",
+          background: checked ? "var(--text-on-accent)" : "var(--bg-surface)",
           boxShadow: "var(--shadow-sm)",
+          transformOrigin: checked ? "right center" : "left center",
           transform: `translateX(${checked ? 16 : 0}px) scaleX(var(--knob-press, 1))`,
-          transition: `transform var(--dur-base) var(--ease-out)`,
+          transition: `transform var(--dur-fast) var(--ease-out),
+                      background var(--dur-fast) var(--ease-out)`,
         }}
-      />
-      {/* 开关是 40×24 的圆角矩形，outline 会切成直角，
-          所以焦点环用它自己的圆角。 */}
-      <span
-        className="df-focus-ring"
-        aria-hidden
-        style={{ borderRadius: "var(--radius-full)" }}
       />
     </button>
   );
@@ -434,7 +853,16 @@ export function EmptyState({
       }}
       className="df-page-in-soft"
     >
-      <div style={{ fontSize: 40, opacity: 0.5 }} aria-hidden>
+      <div
+        style={{
+          color: "var(--text-tertiary)",
+          opacity: 0.7,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        aria-hidden
+      >
         {icon}
       </div>
       <h3 style={{ fontSize: "var(--text-lg)" }}>{title}</h3>
