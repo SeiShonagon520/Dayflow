@@ -12,7 +12,7 @@ from core.types import VideoChunk, ChunkStatus, AnalysisBatch, BatchStatus, Acti
 def storage(tmp_path):
     """Fixture providing a temporary SQLite StorageManager."""
     db_file = tmp_path / "test_dayflow.db"
-    mgr = StorageManager(db_path=db_file, use_pool=False)
+    mgr = StorageManager(db_path=db_file)
     yield mgr
     mgr.close()
 
@@ -89,7 +89,7 @@ def test_storage_batch_lifecycle(storage):
 
 def test_storage_activity_cards(storage):
     """Test saving and querying timeline cards."""
-    now = datetime.now()
+    now = datetime(2026, 11, 24, 15, 0, 0)
     card1 = ActivityCard(
         category="编程",
         title="Dayflow 开发",

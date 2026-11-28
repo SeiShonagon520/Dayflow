@@ -11,36 +11,47 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, saveTextFile } from "@/lib/api";
+import { api, DailyReport, saveTextFile } from "@/lib/api";
 import { fullDate, prettyDate, todayStr, weekdayOf } from "@/lib/format";
-import { Button, EmptyState, SectionTitle, Spinner } from "@/components/ui";
+import { Badge, Button, EmptyState, IconSwap, SectionTitle, Spinner } from "@/components/ui";
+import { LineIcon } from "@/components/LineIcon";
 import { useLatest } from "@/lib/useLatest";
 import { LoadingHandoff } from "@/components/LoadingHandoff";
 import { useIsPhone } from "@/lib/useMediaQuery";
-import { FocusRing } from "@/components/FocusRing";
 import { TimelineSignature } from "@/components/TimelineSignature";
 
 export function ReportsPage({
-  initialDate, active, onOpenTimeline,
+  initialDate, active, onOpenTimeline, onSetupModel,
 }: {
   initialDate: { day: string } | null;
   active: boolean;
-  onOpenTimeline: (day: string) => void;
+  onOpenTimeline: (day: string, id?: number) => void;
+  onSetupModel: () => void;
 }) {
   const today = todayStr();
   const [dates, setDates] = useState<string[]>([]);
   const [selected, setSelected] = useState(() => initialDate?.day ?? today);
-  const [report, setReport] = useState<{ date: string; content: string; hasActivity: boolean } | null>(null);
+  const [report, setReport] = useState<DailyReport | null>(null);
   const [readError, setReadError] = useState("");
   const [retrying, setRetrying] = useState(false);
   const [dateError, setDateError] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [copied, setCopied] = useState(false);
   const selection = useLatest(selected);
   const readRequest = useRef(0);
+  const copyRequest = useRef(0);
   const generationLock = useRef(false);
+  const copyTimer = useRef<number | null>(null);
+  const reportPane = useRef<HTMLDivElement>(null);
   const phone = useIsPhone();
+
+  useEffect(() => () => {
+    ++copyRequest.current;
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+  }, []);
 
   const loadDates = async () => {
     try {
@@ -68,20 +79,30 @@ export function ReportsPage({
   useEffect(() => { if (active) void loadDates(); }, [active]);
   useEffect(() => {
     if (!active) return;
+    ++copyRequest.current;
     setNotice(null);
+    setCopied(false);
+    if (copyTimer.current !== null) {
+      window.clearTimeout(copyTimer.current);
+      copyTimer.current = null;
+    }
+    if (reportPane.current) reportPane.current.scrollTop = 0;
     void loadReport(selected);
     return () => { ++readRequest.current; };
   }, [active, selected]);
 
   const current = report?.date === selected ? report : null;
   const content = current?.content ?? "";
+  const evidence = current?.evidence ?? [];
+  const openEvidence = (id: number) => onOpenTimeline(selected, id);
+  const evidenceAction = (id: number) => evidence.some((item) => item.id === id) ? () => openEvidence(id) : undefined;
   const reportDays = Array.from(new Set([today, selected, ...dates])).sort().reverse();
 
   useEffect(() => {
-    if (!active || selected !== today || !current || current.hasActivity || readError) return;
+    if (!active || selected !== today || !current || readError || generating) return;
     const timer = window.setInterval(() => { if (!document.hidden) void loadReport(selected); }, 8000);
     return () => window.clearInterval(timer);
-  }, [active, selected, today, current?.hasActivity, readError]);
+  }, [active, selected, today, !!current, readError, generating]);
 
   const retry = async () => {
     setRetrying(true);
@@ -94,7 +115,7 @@ export function ReportsPage({
   };
 
   const generate = async () => {
-    if (generationLock.current || !current?.hasActivity) return;
+    if (generationLock.current || !current?.canSupplement) return;
     generationLock.current = true;
     const day = selected;
     setGenerating(day);
@@ -104,23 +125,51 @@ export function ReportsPage({
       if (selection.current === day) {
         ++readRequest.current;
         setReadError("");
-        setReport({ date: day, content: next.content, hasActivity: true });
-        setNotice({ text: "日报已生成" });
+        setReport(next);
+        setNotice({ text: next.isStale ? "补充已保存，活动在生成期间有更新。" : "AI 补充已保存" });
       }
       void loadDates();
     } catch (error) {
-      if (selection.current === day) showError(error, "生成日报失败，请重试");
+      if (selection.current === day) showError(error, "AI 补充失败，请重试");
     } finally {
       generationLock.current = false;
       setGenerating(null);
     }
   };
 
+  const restore = async () => {
+    if (restoring || generating) return;
+    const day = selected;
+    setRestoring(true);
+    try {
+      const result = await api.restoreReport(day);
+      if (selection.current === day) {
+        ++readRequest.current;
+        setReport(result);
+        setNotice({ text: "已切回上一版" });
+      }
+    } catch (error) {
+      if (selection.current === day) showError(error, "恢复上一版失败，请重试");
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const copy = async () => {
+    const day = selected;
+    const op = ++copyRequest.current;
     try {
       await navigator.clipboard.writeText(content);
-      setNotice({ text: "已复制日报" });
+      if (op !== copyRequest.current || selection.current !== day) return;
+      setCopied(true);
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => {
+        copyTimer.current = null;
+        if (op === copyRequest.current && selection.current === day) setCopied(false);
+      }, 1600);
     } catch {
+      if (op !== copyRequest.current || selection.current !== day) return;
+      setCopied(false);
       setNotice({ text: "复制失败，可以保存 Markdown 文件。", error: true });
     }
   };
@@ -146,7 +195,16 @@ export function ReportsPage({
           <h2 className="df-page-title">日报</h2>
           <div className="df-toolbar-spacer" />
           {content && <>
-            <Button size="sm" onClick={copy}>复制日报</Button>
+            <Button size="sm" onClick={copy}>
+              <IconSwap
+                active={copied}
+                size={14}
+                first={<LineIcon name="copy" size={14} />}
+                second={<LineIcon name="check" size={14} />}
+              />
+              <span className="df-copy-label">{copied ? "已复制" : "复制日报"}</span>
+            </Button>
+            <span className="u-sr-only" role="status">{copied ? "已复制日报" : ""}</span>
             <Button size="sm" onClick={exportMd} loading={exporting}>保存文件</Button>
           </>}
         </div>
@@ -155,57 +213,96 @@ export function ReportsPage({
       <div className="df-split" data-stacked={phone ? "true" : "false"}
         style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div className="df-split-aside"
-          style={{ flexShrink: 0, borderRight: "1px solid var(--border-subtle)", overflowY: "auto", padding: "var(--space-3)" }}>
-          <SectionTitle>日期</SectionTitle>
+          style={{ flexShrink: 0, borderRight: phone ? "none" : "1px solid var(--border-subtle)", overflowY: phone ? "hidden" : "auto", padding: phone ? undefined : "var(--space-3)" }}>
+          {!phone && <SectionTitle>日期</SectionTitle>}
           {reportDays.map((day) => (
             <button key={day} onClick={() => setSelected(day)}
               aria-current={day === selected ? "true" : undefined}
-              className="df-hit-v df-report-date">
+              className="df-report-date">
               <span className="df-selection-mark" aria-hidden>●</span>
               {day === today ? "今天" : prettyDate(day)}
               <span className="df-report-weekday">{weekdayOf(day)}</span>
-              <FocusRing />
             </button>
           ))}
           {dateError && <Button size="sm" variant="ghost" onClick={loadDates}>重试读取日期</Button>}
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }} key={selected}>
+        <div ref={reportPane} style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
           {generating && generating !== selected && (
-            <p className="df-context-note" role="status">正在生成 {prettyDate(generating)} 的日报，可以先阅读其他日报。</p>
+            <p className="df-context-note df-feedback" role="status">正在补充 {prettyDate(generating)} 的日报，可以先阅读其他日期。</p>
           )}
           {notice && (
             <p className="df-context-note df-feedback" role={notice.error ? "alert" : "status"}
               data-error={notice.error || undefined}>{notice.text}</p>
           )}
-          {readError && content && <div className="df-inline-notice" role="alert">
+          {readError && content && <div className="df-inline-notice df-feedback" role="alert">
             <span>刷新失败，当前仍显示已打开的日报。</span>
             <Button size="sm" onClick={retry} loading={retrying}>重试读取</Button>
           </div>}
-          <LoadingHandoff loading={(!current && !readError) || (retrying && !content)}
+          <LoadingHandoff retainOnReload loading={(!current && !readError) || (retrying && !content)}
             skeleton={<div className="df-wait"><Spinner />正在读取日报</div>}>
             {readError && !content ? (
-              <EmptyState icon="⚠️" title="日报读取失败" description={readError}
+              <EmptyState icon={<LineIcon name="alert" size={28} />} title="日报读取失败" description={readError}
                 action={<Button onClick={retry}>重试读取</Button>} />
             ) : content ? (
-              <article style={{ maxWidth: 720, margin: "0 auto", padding: "var(--space-5) var(--space-6)" }}>
-                <p className="df-report-weekday">{fullDate(selected)}</p>
-                <Markdown source={content} />
-                <details className="df-details">
-                  <summary>重新生成</summary>
-                  <p>重新生成会替换这篇日报。需要保留原文时，可先保存文件。</p>
-                  <Button size="sm" onClick={generate} loading={generating === selected}
-                    disabled={!!generating && generating !== selected}>生成并替换</Button>
-                </details>
-              </article>
-            ) : current?.hasActivity ? (
-              <EmptyState icon="📄" title="这一天的日报尚未生成"
-                description="用这一天的活动记录整理一份总结。"
-                action={<Button variant="primary" loading={generating === selected}
-                  disabled={!!generating && generating !== selected} onClick={generate}>生成日报</Button>} />
+              <div className="df-report-stage">
+                <article className="df-report-sheet">
+                  <header className="df-report-doc-head">
+                    <p className="df-report-weekday">{fullDate(selected)}</p>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+                      <Badge tone="neutral">本机总结</Badge>
+                      {current?.supplement && (
+                        <Badge tone={current.isStale ? "warning" : "accent"}>
+                          {current.isLegacy ? "历史日报" : current.isStale ? "AI 补充待刷新" : "已含 AI 补充"}
+                        </Badge>
+                      )}
+                    </div>
+                  </header>
+                  {current?.localSummary && <Markdown source={current.localSummary} onEvidence={evidenceAction} />}
+                  {evidence.length > 0 && (
+                    <section className="df-evidence-list" aria-label="相关活动">
+                      <SectionTitle>相关活动</SectionTitle>
+                      {evidence.map((item) => (
+                        <Button key={item.id} variant="secondary" size="sm" onClick={() => openEvidence(item.id)}>
+                          {item.start}–{item.end} · {item.title || "未命名活动"}
+                        </Button>
+                      ))}
+                    </section>
+                  )}
+                  {current?.supplement && (
+                    <section className="df-report-ai-surface" aria-label={current.isLegacy ? "历史日报" : "AI 补充"}>
+                      <div className="df-report-ai-head">
+                        <LineIcon name="sparkles" size={15} />
+                        <h3 style={{ fontSize: "var(--text-md)" }}>{current.isLegacy ? "历史日报" : "AI 补充"}</h3>
+                        {current.isStale && <Badge tone="warning">活动已更新</Badge>}
+                      </div>
+                      {current.isStale && <p className="df-settings-description" style={{ marginBottom: "var(--space-3)" }}>活动有更新，本机总结已刷新。可重新补充。</p>}
+                      <Markdown source={current.supplement} onEvidence={evidenceAction} />
+                    </section>
+                  )}
+                  {current && (current.canSupplement || current.hasPrevious || (current.hasActivity && !current.supplement)) && (
+                    <div className="df-details">
+                      {current.canSupplement && (!current.supplement || current.isStale) && (
+                        <>
+                          <p>会将本机统计和上述活动标题、类别及时段发送给配置的模型。</p>
+                          <Button size="sm" onClick={generate} loading={generating === selected}
+                            disabled={restoring || !!generating && generating !== selected}>
+                            {current.supplement ? "更新 AI 补充" : "用 AI 补充"}
+                          </Button>
+                        </>
+                      )}
+                      {!current.canSupplement && current.hasActivity && !current.supplement && (
+                        <Button size="sm" variant="ghost" onClick={onSetupModel}>连接模型以补充日报</Button>
+                      )}
+                      {current.hasPrevious && <Button size="sm" variant="ghost" onClick={restore}
+                        loading={restoring} disabled={!!generating}>恢复上一版</Button>}
+                    </div>
+                  )}
+                </article>
+              </div>
             ) : (
-              <EmptyState icon="📋" title={selected === today ? "今天还没有可汇总的活动" : "这一天没有可汇总的活动"}
-                description={selected === today ? "录制并分析后，就可以在这里生成日报。" : "可以查看这一天的时间轴，或选择其他日期。"}
+              <EmptyState icon={<LineIcon name="clipboard" size={28} />} title={selected === today ? "今天还没有可汇总的活动" : "这一天没有可汇总的活动"}
+                description={selected === today ? "开始本机计时后，这里会自动显示当天的总结。" : "可以查看这一天的时间轴，或选择其他日期。"}
                 action={<Button onClick={() => onOpenTimeline(selected)}>查看时间轴</Button>} />
             )}
           </LoadingHandoff>
@@ -334,9 +431,11 @@ function parse(src: string): Block[] {
 }
 
 /** 行内：**粗体**、`代码` */
-function inline(text: string, key: string): React.ReactNode[] {
+type EvidenceAction = (id: number) => (() => void) | undefined;
+
+function inline(text: string, key: string, onEvidence?: EvidenceAction): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[活动 #\d+\])/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let n = 0;
@@ -350,6 +449,11 @@ function inline(text: string, key: string): React.ReactNode[] {
           {tok.slice(2, -2)}
         </strong>
       );
+    } else if (tok.startsWith("[活动 #")) {
+      const active = onEvidence?.(Number(tok.slice(5, -1)));
+      parts.push(active
+        ? <button key={`${key}-e${n++}`} className="df-evidence-link" onClick={active}>{tok.slice(1, -1)}</button>
+        : tok);
     } else {
       parts.push(
         <code
@@ -373,7 +477,7 @@ function inline(text: string, key: string): React.ReactNode[] {
   return parts;
 }
 
-function renderBlock(b: Block, i: number) {
+function renderBlock(b: Block, i: number, onEvidence?: EvidenceAction) {
   switch (b.kind) {
     case "h1":
       return (
@@ -386,7 +490,7 @@ function renderBlock(b: Block, i: number) {
             marginBottom: "var(--space-3)",
           }}
         >
-          {inline(b.text, `h1-${i}`)}
+          {inline(b.text, `h1-${i}`, onEvidence)}
         </h1>
       );
     case "h2":
@@ -402,7 +506,7 @@ function renderBlock(b: Block, i: number) {
             borderBottom: "1px solid var(--border-subtle)",
           }}
         >
-          {inline(b.text, `h2-${i}`)}
+          {inline(b.text, `h2-${i}`, onEvidence)}
         </h2>
       );
     case "h3":
@@ -417,7 +521,7 @@ function renderBlock(b: Block, i: number) {
             marginBottom: "var(--space-2)",
           }}
         >
-          {inline(b.text, `h3-${i}`)}
+          {inline(b.text, `h3-${i}`, onEvidence)}
         </h3>
       );
     case "p":
@@ -426,7 +530,7 @@ function renderBlock(b: Block, i: number) {
           key={i}
           style={{ ...BASE, color: "var(--text-secondary)", marginBottom: "var(--space-3)" }}
         >
-          {inline(b.text, `p-${i}`)}
+          {inline(b.text, `p-${i}`, onEvidence)}
         </p>
       );
     case "ul":
@@ -440,7 +544,7 @@ function renderBlock(b: Block, i: number) {
               <span aria-hidden style={{ color: "var(--text-placeholder)", marginRight: 6 }}>
                 ·
               </span>
-              {inline(it, `ul-${i}-${k}`)}
+              {inline(it, `ul-${i}-${k}`, onEvidence)}
             </li>
           ))}
         </ul>
@@ -458,7 +562,7 @@ function renderBlock(b: Block, i: number) {
         >
           {b.items.map((it, k) => (
             <li key={k} style={{ marginBottom: 4, color: "var(--text-secondary)" }}>
-              {inline(it, `ol-${i}-${k}`)}
+              {inline(it, `ol-${i}-${k}`, onEvidence)}
             </li>
           ))}
         </ol>
@@ -477,7 +581,7 @@ function renderBlock(b: Block, i: number) {
             color: "var(--text-secondary)",
           }}
         >
-          {inline(b.text, `q-${i}`)}
+          {inline(b.text, `q-${i}`, onEvidence)}
         </blockquote>
       );
     case "code":
@@ -530,7 +634,7 @@ function renderBlock(b: Block, i: number) {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {inline(h, `th-${i}-${k}`)}
+                    {inline(h, `th-${i}-${k}`, onEvidence)}
                   </th>
                 ))}
               </tr>
@@ -547,7 +651,7 @@ function renderBlock(b: Block, i: number) {
                         color: "var(--text-secondary)",
                       }}
                     >
-                      {inline(c, `td-${i}-${k}-${j}`)}
+                      {inline(c, `td-${i}-${k}-${j}`, onEvidence)}
                     </td>
                   ))}
                 </tr>
@@ -559,7 +663,7 @@ function renderBlock(b: Block, i: number) {
   }
 }
 
-function Markdown({ source }: { source: string }) {
+function Markdown({ source, onEvidence }: { source: string; onEvidence?: EvidenceAction }) {
   const blocks = useMemo(() => parse(source), [source]);
-  return <div>{blocks.map(renderBlock)}</div>;
+  return <div>{blocks.map((block, index) => renderBlock(block, index, onEvidence))}</div>;
 }

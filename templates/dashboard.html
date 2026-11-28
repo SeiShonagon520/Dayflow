@@ -4,572 +4,373 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ data.title }}</title>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <style>
-        /* CSS 变量 - 暗色主题 */
         :root {
-            --bg-primary: #0f0f1a;
-            --bg-secondary: #1a1a2e;
-            --bg-card: #252540;
-            --bg-card-hover: #2d2d4a;
-            --text-primary: #f0f0f5;
-            --text-secondary: #a0a0b0;
-            --text-muted: #6b6b80;
-            --accent: #7c3aed;
-            --accent-light: #a78bfa;
-            --accent-gradient: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+            --motion-response: 90ms;
+            --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+            --bg-primary: #0f1117;
+            --bg-secondary: #171a23;
+            --bg-card: #1e222f;
+            --bg-card-hover: #262b3b;
+            --text-primary: #f2f4f8;
+            --text-secondary: #a8b0c0;
+            --text-muted: #768096;
+            --accent: #3b82f6;
+            --accent-light: #60a5fa;
+            --accent-gradient: linear-gradient(135deg, #2563eb 0%, #60a5fa 100%);
             --success: #10b981;
-            --success-light: #34d399;
             --warning: #f59e0b;
             --danger: #ef4444;
-            --border: #3a3a50;
-            --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.4);
+            --border: #2e3446;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", Roboto, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             line-height: 1.6;
             min-height: 100vh;
         }
 
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 40px 20px;
-        }
+        .container { max-width: 1280px; margin: 0 auto; padding: 36px 20px; }
 
-        /* 头部样式 */
         header {
             text-align: center;
-            margin-bottom: 50px;
-            padding: 40px;
+            margin-bottom: 36px;
+            padding: 32px;
             background: var(--bg-secondary);
-            border-radius: 20px;
+            border-radius: 16px;
             border: 1px solid var(--border);
         }
 
         header h1 {
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 700;
-            background: var(--accent-gradient);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 10px;
+            color: var(--text-primary);
+            margin-bottom: 8px;
         }
 
-        header .date-range {
-            font-size: 1.1rem;
-            color: var(--text-secondary);
-        }
+        header .date-range { font-size: 1.05rem; color: var(--text-secondary); }
+        header .generated-at { font-size: 0.85rem; color: var(--text-muted); margin-top: 6px; }
 
-        header .generated-at {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            margin-top: 8px;
-        }
-
-        /* 概览卡片 */
         .summary-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 18px;
+            margin-bottom: 32px;
         }
 
         .summary-card {
             background: var(--bg-card);
-            border-radius: 16px;
-            padding: 28px;
+            border-radius: 14px;
+            padding: 24px;
             border: 1px solid var(--border);
-            transition: border-color 135ms cubic-bezier(0.22, 1, 0.36, 1);
             position: relative;
             overflow: hidden;
         }
 
-        .summary-card:hover {
-            border-color: var(--accent);
-        }
-
         .summary-card::before {
-            content: '';
+            content: "";
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
+            top: 0; left: 0; right: 0;
+            height: 3px;
         }
-
         .summary-card.total::before { background: var(--accent-gradient); }
-        .summary-card.efficiency::before { background: linear-gradient(135deg, #10b981 0%, #34d399 100%); }
-        .summary-card.deep-work::before { background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%); }
-        .summary-card.activities::before { background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); }
-
-        .summary-card .icon {
-            font-size: 2.5rem;
-            margin-bottom: 12px;
-        }
+        .summary-card.efficiency::before { background: linear-gradient(135deg, #059669 0%, #34d399 100%); }
+        .summary-card.deep-work::before { background: linear-gradient(135deg, #6366f1 0%, #a78bfa 100%); }
+        .summary-card.activities::before { background: linear-gradient(135deg, #d97706 0%, #fbbf24 100%); }
 
         .summary-card .label {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
             margin-bottom: 8px;
         }
 
         .summary-card .value {
-            font-size: 2.2rem;
+            font-size: 2rem;
             font-weight: 700;
+            font-variant-numeric: tabular-nums;
             color: var(--text-primary);
         }
 
         .summary-card .sub-value {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: var(--text-muted);
             margin-top: 4px;
         }
 
-        /* 图表区域 */
         .charts-section {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 24px;
-            margin-bottom: 40px;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
         }
 
         .chart-card {
             background: var(--bg-card);
-            border-radius: 16px;
-            padding: 24px;
+            border-radius: 14px;
+            padding: 22px;
             border: 1px solid var(--border);
+            position: relative;
         }
 
         .chart-card h3 {
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             color: var(--text-primary);
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            margin-bottom: 16px;
         }
 
         .chart-container {
             width: 100%;
-            height: 300px;
-        }
-
-        /* 应用排行 */
-        .top-apps-section {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 28px;
-            border: 1px solid var(--border);
-            margin-bottom: 40px;
-        }
-
-        .top-apps-section h3 {
-            font-size: 1.2rem;
-            margin-bottom: 24px;
+            min-height: 250px;
             display: flex;
             align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .chart-empty { color: var(--text-muted); font-size: 0.9rem; }
+
+        .donut-layout {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 28px;
+            width: 100%;
+            flex-wrap: wrap;
+        }
+
+        .donut-legend {
+            display: flex;
+            flex-direction: column;
             gap: 8px;
+            min-width: 160px;
+        }
+
+        .legend-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            padding: 3px 6px;
+            border-radius: 6px;
+            transition: background-color var(--motion-response) var(--motion-ease);
+        }
+
+        .legend-row:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+
+        .legend-left { display: flex; align-items: center; gap: 8px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+        .legend-val { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+        .chart-tooltip {
+            position: fixed;
+            inset: 0 auto auto 0;
+            pointer-events: none;
+            z-index: 50;
+            background: #141720;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+            display: none;
+            white-space: nowrap;
+        }
+
+        .top-apps-section, .timeline-section {
+            background: var(--bg-card);
+            border-radius: 14px;
+            padding: 24px;
+            border: 1px solid var(--border);
+            margin-bottom: 24px;
+        }
+
+        .top-apps-section h3, .timeline-section h3 {
+            font-size: 1.1rem;
+            margin-bottom: 18px;
         }
 
         .app-item {
             display: flex;
             align-items: center;
-            padding: 16px 0;
+            padding: 14px 0;
             border-bottom: 1px solid var(--border);
         }
-
-        .app-item:last-child {
-            border-bottom: none;
-        }
+        .app-item:last-child { border-bottom: none; }
 
         .app-rank {
-            width: 32px;
-            height: 32px;
+            width: 30px; height: 30px;
             border-radius: 8px;
             background: var(--bg-secondary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            font-size: 0.9rem;
-            margin-right: 16px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 600; font-size: 0.85rem;
+            margin-right: 14px;
         }
+        .app-rank.top-1 { background: #f59e0b; color: #111827; }
+        .app-rank.top-2 { background: #9ca3af; color: #111827; }
+        .app-rank.top-3 { background: #b45309; color: #ffffff; }
 
-        .app-rank.top-1 { background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: #1a1a2e; }
-        .app-rank.top-2 { background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%); }
-        .app-rank.top-3 { background: linear-gradient(135deg, #d97706 0%, #b45309 100%); }
+        .app-info { flex: 1; }
+        .app-name { font-weight: 500; margin-bottom: 2px; }
+        .app-duration { font-size: 0.85rem; color: var(--text-secondary); }
 
-        .app-info {
-            flex: 1;
-        }
-
-        .app-name {
-            font-weight: 500;
-            margin-bottom: 4px;
-        }
-
-        .app-duration {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-        }
-
-        .app-bar-container {
-            width: 200px;
-            margin-left: 20px;
-        }
-
-        .app-bar {
-            height: 8px;
-            background: var(--bg-secondary);
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .app-bar-fill {
-            height: 100%;
-            background: var(--accent-gradient);
-            border-radius: 4px;
-        }
-
-        .app-percentage {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            text-align: right;
-            margin-top: 4px;
-        }
-
-        /* 活动时间轴 */
-        .timeline-section {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 28px;
-            border: 1px solid var(--border);
-            margin-bottom: 40px;
-        }
-
-        .timeline-section h3 {
-            font-size: 1.2rem;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+        .app-bar-container { width: 200px; margin-left: 16px; }
+        .app-bar { height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }
+        .app-bar-fill { height: 100%; background: var(--accent-gradient); border-radius: 4px; }
+        .app-percentage { font-size: 0.8rem; color: var(--text-muted); text-align: right; margin-top: 4px; }
 
         .timeline-filters {
             display: flex;
             gap: 8px;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
             flex-wrap: wrap;
         }
 
         .filter-btn {
-            padding: 8px 16px;
-            border-radius: 20px;
+            padding: 6px 14px;
+            border-radius: 999px;
             border: 1px solid var(--border);
             background: var(--bg-secondary);
             color: var(--text-secondary);
             cursor: pointer;
             font-size: 0.85rem;
-            transition: background-color 135ms cubic-bezier(0.22, 1, 0.36, 1),
-                        border-color 135ms cubic-bezier(0.22, 1, 0.36, 1),
-                        color 135ms cubic-bezier(0.22, 1, 0.36, 1);
+            transition: background-color var(--motion-response) var(--motion-ease),
+                        border-color var(--motion-response) var(--motion-ease),
+                        color var(--motion-response) var(--motion-ease);
         }
-
         .filter-btn:hover, .filter-btn.active {
             background: var(--accent);
             border-color: var(--accent);
-            color: white;
+            color: #ffffff;
         }
 
-        .timeline-list {
-            max-height: 600px;
-            overflow-y: auto;
-        }
+        .timeline-list { max-height: 600px; overflow-y: auto; }
 
         .timeline-item {
             display: flex;
-            padding: 20px;
-            margin-bottom: 12px;
+            padding: 16px 18px;
+            margin-bottom: 10px;
             background: var(--bg-secondary);
-            border-radius: 12px;
+            border-radius: 10px;
             border-left: 4px solid var(--accent);
-            transition: background-color 135ms cubic-bezier(0.22, 1, 0.36, 1);
+            transition: background-color var(--motion-response) var(--motion-ease);
         }
+        .timeline-item:hover { background: var(--bg-card-hover); }
 
-        .timeline-item:hover {
-            background: var(--bg-card-hover);
+        @media (prefers-reduced-motion: reduce) {
+            :root { --motion-response: 0ms; }
         }
 
         .timeline-time {
-            min-width: 100px;
-            padding-right: 20px;
+            min-width: 104px;
+            padding-right: 16px;
             border-right: 1px solid var(--border);
+            font-variant-numeric: tabular-nums;
         }
+        .timeline-time .time { font-weight: 600; font-size: 0.95rem; }
+        .timeline-time .date { font-size: 0.78rem; color: var(--text-muted); }
+        .timeline-time .duration { font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px; }
 
-        .timeline-time .time {
-            font-weight: 600;
-            font-size: 1rem;
-        }
+        .timeline-content { flex: 1; padding-left: 18px; }
+        .timeline-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+        .timeline-category { padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 500; }
+        .timeline-title { font-weight: 600; font-size: 0.98rem; }
+        .timeline-summary { color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 8px; }
+        .timeline-meta { display: flex; align-items: center; gap: 14px; font-size: 0.8rem; color: var(--text-muted); }
 
-        .timeline-time .date {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
+        .score-badge { padding: 2px 8px; border-radius: 6px; font-weight: 500; font-variant-numeric: tabular-nums; }
+        .score-high { background: rgba(16, 185, 129, 0.18); color: var(--success); }
+        .score-medium { background: rgba(245, 158, 11, 0.18); color: var(--warning); }
+        .score-low { background: rgba(239, 68, 68, 0.18); color: var(--danger); }
 
-        .timeline-time .duration {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            margin-top: 4px;
-        }
-
-        .timeline-content {
-            flex: 1;
-            padding-left: 20px;
-        }
-
-        .timeline-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-
-        .timeline-category {
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-
-        .timeline-title {
-            font-weight: 600;
-            font-size: 1rem;
-        }
-
-        .timeline-summary {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-            margin-bottom: 8px;
-        }
-
-        .timeline-meta {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
-
-        .timeline-score {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .score-badge {
-            padding: 2px 8px;
-            border-radius: 8px;
-            font-weight: 500;
-        }
-
-        .score-high { background: rgba(16, 185, 129, 0.2); color: var(--success); }
-        .score-medium { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
-        .score-low { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
-
-        /* AI 洞察 */
-        .insights-section {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 28px;
-            border: 1px solid var(--border);
-            margin-bottom: 40px;
-        }
-
-        .insights-section h3 {
-            font-size: 1.2rem;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .insights-content {
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            padding: 24px;
-            line-height: 1.8;
-            color: var(--text-secondary);
-        }
-
-        .insights-content p {
-            margin-bottom: 12px;
-        }
-
-        .insights-content p:last-child {
-            margin-bottom: 0;
-        }
-
-        .no-insights {
-            text-align: center;
-            color: var(--text-muted);
-            padding: 40px;
-        }
-
-        /* 页脚 */
         footer {
             text-align: center;
-            padding: 30px;
+            padding: 24px;
             color: var(--text-muted);
             font-size: 0.85rem;
         }
+        footer a { color: var(--accent-light); text-decoration: none; }
 
-        footer a {
-            color: var(--accent-light);
-            text-decoration: none;
-        }
-
-        /* 响应式 */
         @media (max-width: 768px) {
-            .container {
-                padding: 20px 12px;
-            }
-
-            header h1 {
-                font-size: 1.8rem;
-            }
-
-            .summary-cards {
-                grid-template-columns: 1fr 1fr;
-            }
-
-            .charts-section {
-                grid-template-columns: 1fr;
-            }
-
-            .app-bar-container {
-                display: none;
-            }
-
-            .timeline-item {
-                flex-direction: column;
-            }
-
+            .container { padding: 20px 12px; }
+            .summary-cards { grid-template-columns: 1fr 1fr; }
+            .charts-section { grid-template-columns: 1fr; }
+            .app-bar-container { display: none; }
+            .timeline-item { flex-direction: column; }
             .timeline-time {
                 border-right: none;
                 border-bottom: 1px solid var(--border);
-                padding-bottom: 12px;
-                margin-bottom: 12px;
+                padding-right: 0;
+                padding-bottom: 10px;
+                margin-bottom: 10px;
             }
-
-            .timeline-content {
-                padding-left: 0;
-            }
+            .timeline-content { padding-left: 0; }
         }
 
         @media (max-width: 480px) {
-            .summary-cards {
-                grid-template-columns: 1fr;
-            }
-
-            .summary-card .value {
-                font-size: 1.8rem;
-            }
+            .summary-cards { grid-template-columns: 1fr; }
         }
-
-        /* 滚动条样式 */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--bg-secondary);
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--text-muted);
-        }
-</style>
+    </style>
 </head>
 <body>
     <div class="container">
-        <!-- 头部 -->
         <header>
-            <h1>📊 Dayflow 生产力报告</h1>
+            <h1>Dayflow 生产力报告</h1>
             <p class="date-range">{{ data.date_range }}</p>
             <p class="generated-at">生成于 {{ data.generated_at }}</p>
         </header>
 
-        <!-- 概览卡片 -->
         <section class="summary-cards">
             <div class="summary-card total">
-                <div class="icon">⏱️</div>
                 <div class="label">总时长</div>
                 <div class="value">{{ data.total_duration_formatted }}</div>
                 <div class="sub-value">记录的活动时间</div>
             </div>
             <div class="summary-card efficiency">
-                <div class="icon">📈</div>
                 <div class="label">平均效率</div>
-                <div class="value">{{ data.avg_productivity_score }}%</div>
-                <div class="sub-value">加权平均评分</div>
+                <div class="value">{{ data.avg_productivity_score }} 分</div>
+                <div class="sub-value">时长加权平均评分</div>
             </div>
             <div class="summary-card deep-work">
-                <div class="icon">🎯</div>
                 <div class="label">深度工作</div>
                 <div class="value">{{ data.deep_work_formatted }}</div>
-                <div class="sub-value">效率 ≥ 80% 的时间</div>
+                <div class="sub-value">单段 ≥ 60 分钟</div>
             </div>
             <div class="summary-card activities">
-                <div class="icon">📋</div>
                 <div class="label">活动数量</div>
                 <div class="value">{{ data.activity_count }}</div>
                 <div class="sub-value">记录的活动条目</div>
             </div>
         </section>
 
-        <!-- 图表区域 -->
         <section class="charts-section">
             <div class="chart-card">
-                <h3>🥧 时间分布</h3>
+                <h3>时间分布</h3>
                 <div id="category-chart" class="chart-container"></div>
             </div>
             <div class="chart-card">
-                <h3>📊 每小时效率</h3>
+                <h3>每小时效率</h3>
                 <div id="hourly-chart" class="chart-container"></div>
             </div>
         </section>
 
         <section class="charts-section">
             <div class="chart-card" style="grid-column: 1 / -1;">
-                <h3>📈 最近7天趋势</h3>
+                <h3>所选日期趋势</h3>
                 <div id="weekly-chart" class="chart-container"></div>
             </div>
         </section>
 
-        <!-- 应用排行 -->
         {% if data.top_applications %}
         <section class="top-apps-section">
-            <h3>🏆 应用使用排行</h3>
+            <h3>应用使用排行</h3>
             {% for app in data.top_applications %}
             <div class="app-item">
                 <div class="app-rank {% if loop.index == 1 %}top-1{% elif loop.index == 2 %}top-2{% elif loop.index == 3 %}top-3{% endif %}">
@@ -590,16 +391,13 @@
         </section>
         {% endif %}
 
-        <!-- 活动时间轴 -->
         {% if data.activities %}
         <section class="timeline-section">
-            <h3>📅 活动时间轴</h3>
-            <div class="timeline-filters">
-                <button class="filter-btn active" onclick="filterTimeline('all')">全部</button>
+            <h3>活动时间轴</h3>
+            <div class="timeline-filters" id="timeline-filters">
+                <button type="button" class="filter-btn active" data-filter="all" aria-pressed="true">全部</button>
                 {% for category in data.categories %}
-                <button class="filter-btn" onclick="filterTimeline('{{ category }}')" style="--cat-color: {{ data.category_colors[category] }}">
-                    {{ category }}
-                </button>
+                <button type="button" class="filter-btn" data-filter="{{ category }}" aria-pressed="false">{{ category }}</button>
                 {% endfor %}
             </div>
             <div class="timeline-list" id="timeline-list">
@@ -620,12 +418,12 @@
                         <div class="timeline-summary">{{ activity.summary }}</div>
                         <div class="timeline-meta">
                             {% if activity.main_app %}
-                            <span>💻 {{ activity.main_app }}</span>
+                            <span>{{ activity.main_app }}</span>
                             {% endif %}
                             <span class="timeline-score">
-                                效率: 
-                                <span class="score-badge {% if activity.score >= 80 %}score-high{% elif activity.score >= 50 %}score-medium{% else %}score-low{% endif %}">
-                                    {{ activity.score | round(0) | int }}%
+                                效率:
+                                <span class="score-badge {% if activity.score >= 70 %}score-high{% elif activity.score >= 40 %}score-medium{% else %}score-low{% endif %}">
+                                    {{ activity.score | round(0) | int }} 分
                                 </span>
                             </span>
                         </div>
@@ -636,277 +434,243 @@
         </section>
         {% endif %}
 
-        <!-- AI 洞察 -->
-        <section class="insights-section">
-            <h3>🤖 AI 洞察</h3>
-            {% if data.ai_insights %}
-            <div class="insights-content">
-                {{ data.ai_insights | safe }}
-            </div>
-            {% else %}
-            <div class="no-insights">
-                <p>暂无 AI 洞察数据</p>
-                <p style="font-size: 0.8rem; margin-top: 8px;">AI 洞察将在邮件报告中生成</p>
-            </div>
-            {% endif %}
-        </section>
-
-        <!-- 页脚 -->
         <footer>
-            <p>由 <a href="https://github.com/SeiShonagon520/Dayflow" target="_blank">Dayflow</a> 生成</p>
-            <p style="margin-top: 8px;">让每一天都有迹可循 ✨</p>
+            <p>由 <a href="https://github.com/SeiShonagon520/Dayflow" target="_blank" rel="noreferrer">Dayflow</a> 离线导出生成</p>
         </footer>
     </div>
 
+    <div id="chart-tooltip" class="chart-tooltip" role="tooltip"></div>
+
     <script>
-        // 图表数据
         const categoryData = {{ data.category_distribution | tojson }};
         const hourlyData = {{ data.hourly_efficiency | tojson }};
         const weeklyData = {{ data.weekly_trend | tojson }};
+        const SVG_NS = "http://www.w3.org/2000/svg";
+        const tip = document.getElementById("chart-tooltip");
+        let tipWidth = 0;
+        let tipHeight = 0;
 
-        // 通用图表配置
-        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-        const chartTheme = {
-            animation: !reducedMotion.matches,
-            animationDuration: 180,
-            animationDurationUpdate: 135,
-            animationEasing: 'cubicOut',
-            backgroundColor: 'transparent',
-            textStyle: { color: '#a0a0b0' },
-            title: { textStyle: { color: '#f0f0f5' } }
-        };
+        window.addEventListener("resize", () => { tip.style.display = "none"; });
 
-        // 分类饼图
-        if (categoryData.length > 0) {
-            const categoryChart = echarts.init(document.getElementById('category-chart'));
-            categoryChart.setOption({
-                ...chartTheme,
-                tooltip: {
-                    trigger: 'item',
-                    formatter: '{b}: {c} 分钟 ({d}%)',
-                    backgroundColor: '#252540',
-                    borderColor: '#3a3a50',
-                    textStyle: { color: '#f0f0f5' }
-                },
-                legend: {
-                    orient: 'vertical',
-                    right: '5%',
-                    top: 'center',
-                    textStyle: { color: '#a0a0b0' }
-                },
-                series: [{
-                    type: 'pie',
-                    radius: ['45%', '70%'],
-                    center: ['35%', '50%'],
-                    avoidLabelOverlap: false,
-                    itemStyle: {
-                        borderRadius: 8,
-                        borderColor: '#0f0f1a',
-                        borderWidth: 2
-                    },
-                    label: { show: false },
-                    emphasis: {
-                        label: {
-                            show: true,
-                            fontSize: 14,
-                            fontWeight: 'bold',
-                            color: '#f0f0f5'
-                        }
-                    },
-                    data: categoryData.map(item => ({
-                        name: item.name,
-                        value: item.value,
-                        itemStyle: { color: item.color }
-                    }))
-                }]
-            });
+        function svgEl(tag, attrs = {}) {
+            const node = document.createElementNS(SVG_NS, tag);
+            for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+            return node;
         }
 
-        // 每小时效率折线图
-        if (hourlyData.length > 0) {
-            const hourlyChart = echarts.init(document.getElementById('hourly-chart'));
-            hourlyChart.setOption({
-                ...chartTheme,
-                tooltip: {
-                    trigger: 'axis',
-                    backgroundColor: '#252540',
-                    borderColor: '#3a3a50',
-                    textStyle: { color: '#f0f0f5' },
-                    formatter: function(params) {
-                        const data = params[0];
-                        return `${data.name}:00<br/>效率: ${data.value}%<br/>时长: ${hourlyData[data.dataIndex].duration} 分钟`;
-                    }
-                },
-                grid: {
-                    left: '3%',
-                    right: '4%',
-                    bottom: '3%',
-                    containLabel: true
-                },
-                xAxis: {
-                    type: 'category',
-                    boundaryGap: false,
-                    data: hourlyData.map(d => d.hour),
-                    axisLine: { lineStyle: { color: '#3a3a50' } },
-                    axisLabel: { 
-                        color: '#a0a0b0',
-                        formatter: '{value}:00'
-                    }
-                },
-                yAxis: {
-                    type: 'value',
-                    max: 100,
-                    axisLine: { lineStyle: { color: '#3a3a50' } },
-                    axisLabel: { 
-                        color: '#a0a0b0',
-                        formatter: '{value}%'
-                    },
-                    splitLine: { lineStyle: { color: '#2a2a40' } }
-                },
-                series: [{
-                    type: 'line',
-                    smooth: true,
-                    data: hourlyData.map(d => d.score),
-                    lineStyle: {
-                        color: '#7c3aed',
-                        width: 3
-                    },
-                    areaStyle: {
-                        color: {
-                            type: 'linear',
-                            x: 0, y: 0, x2: 0, y2: 1,
-                            colorStops: [
-                                { offset: 0, color: 'rgba(124, 58, 237, 0.4)' },
-                                { offset: 1, color: 'rgba(124, 58, 237, 0.05)' }
-                            ]
-                        }
-                    },
-                    symbol: 'circle',
-                    symbolSize: 6,
-                    itemStyle: { color: '#7c3aed' }
-                }]
+        function bindTooltip(el, lines) {
+            el.addEventListener("mouseenter", (e) => {
+                tip.textContent = "";
+                lines.forEach((line, idx) => {
+                    if (idx > 0) tip.appendChild(document.createElement("br"));
+                    tip.appendChild(document.createTextNode(line));
+                });
+                tip.style.display = "block";
+                tipWidth = tip.offsetWidth;
+                tipHeight = tip.offsetHeight;
+                moveTooltip(e);
             });
+            el.addEventListener("mousemove", moveTooltip);
+            el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
         }
 
-        // 周趋势柱状图
-        if (weeklyData.length > 0) {
-            const weeklyChart = echarts.init(document.getElementById('weekly-chart'));
-            weeklyChart.setOption({
-                ...chartTheme,
-                tooltip: {
-                    trigger: 'axis',
-                    backgroundColor: '#252540',
-                    borderColor: '#3a3a50',
-                    textStyle: { color: '#f0f0f5' },
-                    formatter: function(params) {
-                        const idx = params[0].dataIndex;
-                        const data = weeklyData[idx];
-                        return `${data.date} ${data.weekday}<br/>时长: ${data.duration} 分钟<br/>效率: ${data.score}%`;
-                    }
-                },
-                legend: {
-                    data: ['时长', '效率'],
-                    textStyle: { color: '#a0a0b0' },
-                    top: 0
-                },
-                grid: {
-                    left: '3%',
-                    right: '4%',
-                    bottom: '3%',
-                    containLabel: true
-                },
-                xAxis: {
-                    type: 'category',
-                    data: weeklyData.map(d => d.weekday),
-                    axisLine: { lineStyle: { color: '#3a3a50' } },
-                    axisLabel: { color: '#a0a0b0' }
-                },
-                yAxis: [
-                    {
-                        type: 'value',
-                        name: '时长(分钟)',
-                        nameTextStyle: { color: '#a0a0b0' },
-                        axisLine: { lineStyle: { color: '#3a3a50' } },
-                        axisLabel: { color: '#a0a0b0' },
-                        splitLine: { lineStyle: { color: '#2a2a40' } }
-                    },
-                    {
-                        type: 'value',
-                        name: '效率(%)',
-                        max: 100,
-                        nameTextStyle: { color: '#a0a0b0' },
-                        axisLine: { lineStyle: { color: '#3a3a50' } },
-                        axisLabel: { 
-                            color: '#a0a0b0',
-                            formatter: '{value}%'
-                        },
-                        splitLine: { show: false }
-                    }
-                ],
-                series: [
-                    {
-                        name: '时长',
-                        type: 'bar',
-                        data: weeklyData.map(d => d.duration),
-                        itemStyle: {
-                            color: {
-                                type: 'linear',
-                                x: 0, y: 0, x2: 0, y2: 1,
-                                colorStops: [
-                                    { offset: 0, color: '#7c3aed' },
-                                    { offset: 1, color: '#a78bfa' }
-                                ]
-                            },
-                            borderRadius: [4, 4, 0, 0]
-                        },
-                        barWidth: '40%'
-                    },
-                    {
-                        name: '效率',
-                        type: 'line',
-                        yAxisIndex: 1,
-                        data: weeklyData.map(d => d.score),
-                        lineStyle: { color: '#10b981', width: 3 },
-                        symbol: 'circle',
-                        symbolSize: 8,
-                        itemStyle: { color: '#10b981' }
-                    }
-                ]
-            });
+        function moveTooltip(e) {
+            const x = Math.min(e.clientX + 14, window.innerWidth - tipWidth - 12);
+            const y = Math.min(e.clientY + 14, window.innerHeight - tipHeight - 12);
+            tip.style.transform = `translate(${Math.max(8, x)}px, ${Math.max(8, y)}px)`;
         }
 
-        // 时间轴筛选
-        function filterTimeline(category) {
-            const items = document.querySelectorAll('.timeline-item');
-            const buttons = document.querySelectorAll('.filter-btn');
-            
-            buttons.forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
-            
-            items.forEach(item => {
-                if (category === 'all' || item.dataset.category === category) {
-                    item.style.display = 'flex';
-                } else {
-                    item.style.display = 'none';
+        function renderDonut(container, items) {
+            const total = items.reduce((s, d) => s + (d.value || 0), 0);
+            if (!items.length || total <= 0) {
+                container.innerHTML = '<span class="chart-empty">暂无分类数据</span>';
+                return;
+            }
+            const layout = document.createElement("div");
+            layout.className = "donut-layout";
+
+            const size = 200;
+            const r = 72;
+            const c = 2 * Math.PI * r;
+            const svg = svgEl("svg", { width: size, height: size, viewBox: `0 0 ${size} ${size}`, role: "img", "aria-label": "时间分布环形图" });
+
+            let offset = 0;
+            items.forEach((item) => {
+                const pct = item.value / total;
+                const dash = pct * c;
+                const seg = svgEl("circle", {
+                    cx: size / 2, cy: size / 2, r,
+                    fill: "none",
+                    stroke: item.color || "#60a5fa",
+                    "stroke-width": 26,
+                    "stroke-dasharray": `${Math.max(dash - 1.5, 0)} ${c}`,
+                    "stroke-dashoffset": -offset,
+                    transform: `rotate(-90 ${size / 2} ${size / 2})`,
+                    style: "cursor:pointer;",
+                });
+                bindTooltip(seg, [`${item.name}`, `${item.value} 分钟 (${Math.round(pct * 100)}%)`]);
+                svg.appendChild(seg);
+                offset += dash;
+            });
+
+            const centerText = svgEl("text", {
+                x: size / 2, y: size / 2 - 2, "text-anchor": "middle",
+                fill: "#f2f4f8", "font-size": "18", "font-weight": "700",
+            });
+            centerText.textContent = `${Math.round(total)}m`;
+            const subText = svgEl("text", {
+                x: size / 2, y: size / 2 + 16, "text-anchor": "middle",
+                fill: "#768096", "font-size": "11",
+            });
+            subText.textContent = "总记录";
+            svg.appendChild(centerText);
+            svg.appendChild(subText);
+
+            const legend = document.createElement("div");
+            legend.className = "donut-legend";
+            items.forEach((item) => {
+                const row = document.createElement("div");
+                row.className = "legend-row";
+                const left = document.createElement("span");
+                left.className = "legend-left";
+                const dot = document.createElement("span");
+                dot.className = "legend-dot";
+                dot.style.background = item.color || "#60a5fa";
+                const name = document.createElement("span");
+                name.textContent = item.name;
+                left.append(dot, name);
+                const val = document.createElement("span");
+                val.className = "legend-val";
+                val.textContent = `${item.value}m · ${Math.round((item.value / total) * 100)}%`;
+                row.append(left, val);
+                legend.appendChild(row);
+            });
+
+            layout.append(svg, legend);
+            container.appendChild(layout);
+        }
+
+        function renderHourly(container, rows) {
+            if (!rows.length || !rows.some((d) => d.duration > 0)) {
+                container.innerHTML = '<span class="chart-empty">暂无小时效率数据</span>';
+                return;
+            }
+            const w = 520, h = 230, pad = { t: 16, r: 16, b: 30, l: 38 };
+            const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+            const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, style: "width:100%;height:auto;max-height:250px;", role: "img", "aria-label": "每小时效率折线图" });
+
+            [0, 50, 100].forEach((val) => {
+                const y = pad.t + ih - (val / 100) * ih;
+                svg.appendChild(svgEl("line", { x1: pad.l, y1: y, x2: w - pad.r, y2: y, stroke: "#2e3446", "stroke-dasharray": "3 3" }));
+                const t = svgEl("text", { x: pad.l - 6, y: y + 4, "text-anchor": "end", fill: "#768096", "font-size": "10" });
+                t.textContent = `${val}分`;
+                svg.appendChild(t);
+            });
+
+            const pts = rows.map((d, i) => ({
+                x: pad.l + (i / Math.max(rows.length - 1, 1)) * iw,
+                y: pad.t + ih - (Math.min(100, Math.max(0, d.score || 0)) / 100) * ih,
+                d,
+            }));
+
+            const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+            const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${(pad.t + ih).toFixed(1)} L${pts[0].x.toFixed(1)},${(pad.t + ih).toFixed(1)} Z`;
+            svg.appendChild(svgEl("path", { d: areaPath, fill: "rgba(59, 130, 246, 0.16)" }));
+            svg.appendChild(svgEl("path", { d: linePath, fill: "none", stroke: "#3b82f6", "stroke-width": 2.2 }));
+
+            pts.forEach((p) => {
+                if (p.d.hour % 4 === 0) {
+                    const lbl = svgEl("text", { x: p.x, y: h - 8, "text-anchor": "middle", fill: "#768096", "font-size": "10" });
+                    lbl.textContent = `${p.d.hour}:00`;
+                    svg.appendChild(lbl);
+                }
+                if (p.d.duration > 0) {
+                    const dot = svgEl("circle", { cx: p.x, cy: p.y, r: 4, fill: "#60a5fa", style: "cursor:pointer;" });
+                    bindTooltip(dot, [`${p.d.hour}:00`, `效率: ${p.d.score} 分`, `时长: ${p.d.duration} 分钟`]);
+                    svg.appendChild(dot);
                 }
             });
+            container.appendChild(svg);
         }
 
-        // 响应式图表
-        reducedMotion.addEventListener('change', event => {
-            ['category-chart', 'hourly-chart', 'weekly-chart'].forEach(id => {
-                echarts.getInstanceByDom(document.getElementById(id))
-                    ?.setOption({ animation: !event.matches });
-            });
-        });
+        function renderTrend(container, rows) {
+            if (!rows.length) {
+                container.innerHTML = '<span class="chart-empty">暂无趋势数据</span>';
+                return;
+            }
+            const w = 960, h = 240, pad = { t: 20, r: 44, b: 36, l: 48 };
+            const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+            const maxDur = Math.max(60, ...rows.map((d) => d.duration || 0));
+            const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, style: "width:100%;height:auto;max-height:260px;", role: "img", "aria-label": "所选日期趋势图" });
 
-        window.addEventListener('resize', function() {
-            const charts = ['category-chart', 'hourly-chart', 'weekly-chart'];
-            charts.forEach(id => {
-                const chart = echarts.getInstanceByDom(document.getElementById(id));
-                if (chart) chart.resize();
+            [0, 0.5, 1].forEach((ratio) => {
+                const y = pad.t + ih - ratio * ih;
+                svg.appendChild(svgEl("line", { x1: pad.l, y1: y, x2: w - pad.r, y2: y, stroke: "#2e3446", "stroke-dasharray": "3 3" }));
+                const leftLbl = svgEl("text", { x: pad.l - 6, y: y + 4, "text-anchor": "end", fill: "#768096", "font-size": "10" });
+                leftLbl.textContent = `${Math.round(maxDur * ratio)}m`;
+                svg.appendChild(leftLbl);
+                const rightLbl = svgEl("text", { x: w - pad.r + 6, y: y + 4, "text-anchor": "start", fill: "#10b981", "font-size": "10" });
+                rightLbl.textContent = `${Math.round(ratio * 100)}分`;
+                svg.appendChild(rightLbl);
             });
-        });
+
+            const step = iw / rows.length;
+            const barW = Math.min(36, Math.max(8, step * 0.45));
+            const linePts = [];
+
+            rows.forEach((d, i) => {
+                const cx = pad.l + step * i + step / 2;
+                const bh = ((d.duration || 0) / maxDur) * ih;
+                const bar = svgEl("rect", {
+                    x: cx - barW / 2, y: pad.t + ih - bh, width: barW, height: Math.max(bh, 0),
+                    rx: 4, fill: "#3b82f6", opacity: "0.82", style: "cursor:pointer;",
+                });
+                bindTooltip(bar, [`${d.date} ${d.weekday}`, `时长: ${d.duration} 分钟`, `效率: ${d.score} 分`]);
+                svg.appendChild(bar);
+
+                const sy = pad.t + ih - (Math.min(100, Math.max(0, d.score || 0)) / 100) * ih;
+                linePts.push({ x: cx, y: sy, d });
+
+                if (rows.length <= 14 || i % Math.ceil(rows.length / 10) === 0 || i === rows.length - 1) {
+                    const lbl = svgEl("text", { x: cx, y: h - 10, "text-anchor": "middle", fill: "#768096", "font-size": "10" });
+                    lbl.textContent = rows.length <= 7 ? d.weekday : d.date.slice(5);
+                    svg.appendChild(lbl);
+                }
+            });
+
+            if (linePts.length > 1) {
+                const path = linePts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                svg.appendChild(svgEl("path", { d: path, fill: "none", stroke: "#10b981", "stroke-width": 2.4 }));
+            }
+            linePts.forEach((p) => {
+                const dot = svgEl("circle", { cx: p.x, cy: p.y, r: 4, fill: "#10b981", style: "cursor:pointer;" });
+                bindTooltip(dot, [`${p.d.date} ${p.d.weekday}`, `时长: ${p.d.duration} 分钟`, `效率: ${p.d.score} 分`]);
+                svg.appendChild(dot);
+            });
+            container.appendChild(svg);
+        }
+
+        renderDonut(document.getElementById("category-chart"), categoryData);
+        renderHourly(document.getElementById("hourly-chart"), hourlyData);
+        renderTrend(document.getElementById("weekly-chart"), weeklyData);
+
+        const filterBar = document.getElementById("timeline-filters");
+        if (filterBar) {
+            filterBar.addEventListener("click", (ev) => {
+                const btn = ev.target.closest(".filter-btn");
+                if (!btn) return;
+                const category = btn.dataset.filter;
+                filterBar.querySelectorAll(".filter-btn").forEach((el) => {
+                    el.classList.toggle("active", el === btn);
+                    el.setAttribute("aria-pressed", String(el === btn));
+                });
+                const list = document.querySelector(".timeline-list");
+                document.querySelectorAll(".timeline-item").forEach((item) => {
+                    item.style.display = category === "all" || item.dataset.category === category ? "flex" : "none";
+                });
+                list.scrollTop = 0;
+            });
+        }
     </script>
 </body>
 </html>

@@ -39,14 +39,15 @@ def _ensure_importable() -> None:
 def _init_early_logging() -> None:
     try:
         import config
+        from core.log_manager import LogManager
         config.ensure_directories()
-        log_file = config.APP_DATA_DIR / "dayflow.log"
-        logging.basicConfig(
-            filename=str(log_file),
-            level=logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            encoding="utf-8",
-        )
+        LogManager(
+            log_dir=config.APP_DATA_DIR,
+            log_filename="dayflow.log",
+            max_size_mb=5,
+            backup_count=5,
+            retention_days=30,
+        ).setup()
     except Exception:
         pass
 
@@ -92,4 +93,9 @@ def _port_in_use() -> bool:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    # PyInstaller onefile 启动独立 UIA spawn 子进程前必须先调用 freeze_support()，
+    # 防止子进程重入 Uvicorn。
+    multiprocessing.freeze_support()
     raise SystemExit(main())

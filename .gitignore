@@ -59,9 +59,6 @@ logs/
 secrets.py
 api_keys.py
 
-# Project documentation (internal use only)
-项目技术要�?md
-
 # OS files
 .DS_Store
 Thumbs.db
@@ -76,13 +73,12 @@ _run_*.py
 # Claude local settings
 .claude/
 
-# Packaged builds
+# Packaged builds & generated Tauri schemas
 Dayflow/
 src-tauri/target/
 src-tauri/resources/*.exe
-
-# PyInstaller (keep .spec file for reproducible builds)
-# *.spec
+src-tauri/gen/schemas/
 
 # Tool caches
 .commandcode/
+.hypothesis/

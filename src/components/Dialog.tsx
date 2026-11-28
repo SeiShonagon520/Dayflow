@@ -15,7 +15,7 @@
  */
 import { ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useExit } from "@/lib/motion";
+import { useExit, useSurfaceEnter } from "@/lib/motion";
 import { useLatest } from "@/lib/useLatest";
 
 const FOCUSABLE = [
@@ -38,12 +38,16 @@ export function Dialog({
   onClose,
   onExited,
   labelledBy,
+  size = "md",
+  flush = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   onExited: () => void;
   labelledBy?: string;
+  size?: "md" | "lg";
+  flush?: boolean;
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
@@ -52,6 +56,7 @@ export function Dialog({
   const overlay = useRef<HTMLDivElement>(null);
   const closing = !open;
   const closingRef = useLatest(closing);
+  useSurfaceEnter(overlay);
   useExit(overlay, closing, onExited);
   const onCloseRef = useLatest(onClose);
 
@@ -68,8 +73,10 @@ export function Dialog({
 
     const onKey = (e: KeyboardEvent) => {
       if (closingRef.current) {
-        e.preventDefault();
-        e.stopPropagation();
+        if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         return;
       }
       if (e.key === "Escape") {
@@ -124,9 +131,9 @@ export function Dialog({
         inset: 0,
         background: "var(--scrim)",
         display: "flex",
-        alignItems: "center",
+        alignItems: flush ? "flex-start" : "center",
         justifyContent: "center",
-        padding: "var(--space-4)",
+        padding: flush ? "min(14vh, 96px) var(--space-4) var(--space-4)" : "var(--space-4)",
         zIndex: "var(--z-modal)",
       }}
     >
@@ -140,20 +147,37 @@ export function Dialog({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="df-dialog"
-        style={{
-          background: "var(--bg-raised)",
-          border: "1px solid var(--border-default)",
-          borderRadius: "var(--radius-xl)",
-          boxShadow: "var(--shadow-lg)",
-          padding: "var(--space-6)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "var(--space-4)",
-        }}
+        data-size={size}
+        data-flush={flush ? "true" : undefined}
       >
         {children}
       </div>
     </div>,
     document.body,
   );
+}
+
+export function DialogHeader({
+  title,
+  description,
+  id,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  id?: string;
+}) {
+  return (
+    <div className="df-dialog-head">
+      <h3 id={id} className="df-dialog-title">{title}</h3>
+      {description && <p className="df-dialog-desc">{description}</p>}
+    </div>
+  );
+}
+
+export function DialogBody({ children }: { children: ReactNode }) {
+  return <div className="df-dialog-body">{children}</div>;
+}
+
+export function DialogFooter({ children }: { children: ReactNode }) {
+  return <div className="df-dialog-foot">{children}</div>;
 }

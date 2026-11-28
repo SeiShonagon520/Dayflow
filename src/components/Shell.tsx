@@ -1,28 +1,20 @@
 /*
  * 应用外壳
  *
- * 侧边栏在三个阶段之间切换，依据是内容还剩多少可用宽度，
- * 不是设备叫什么名字：
- *
- *   ≥1000px  完整侧栏 200px，图标 + 文字
+ * 侧边栏在三个阶段之间切换，依据是内容还剩多少可用宽度：
+ *   ≥1000px  完整侧栏，图标 + 文字
  *   ≥620px   图标栏 56px，只留图标，文字转 tooltip
  *   <620px   底部标签栏，导航移到拇指区，主操作留在底部
- *
- * 旧版固定 200px 不动。实测 320px 下内容区只剩 118px，
- * 活动标题整行不可见 —— 不是挤，是没了。
- *
- * 窗口边框用 border 而不是 box-shadow：frameless 窗口没有系统边框，
- * 1px 描边是唯一能让窗口边界可见的办法。
  */
 
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { MutableRefObject, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/api";
-import { Button } from "@/components/ui";
-import { FocusRing } from "@/components/FocusRing";
+import { Button, IconSwap, Kbd, Tooltip } from "@/components/ui";
 import { LineIcon, LineIconName } from "@/components/LineIcon";
 import { useIsNarrow, useIsPhone } from "@/lib/useMediaQuery";
 import { useRecording } from "@/lib/useRecording";
 import { restorePreviousMotion } from "@/lib/motion";
+import { readTheme } from "@/lib/theme";
 
 export type PageKey = "timeline" | "reports" | "stats" | "settings";
 
@@ -44,80 +36,93 @@ function NavItem({
   collapsed: boolean;
   onClick: () => void;
 }) {
-  return (
+  const button = (
     <button
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      /* 收起成图标栏时，文字不可见但必须仍可读 —— 读屏和
-         悬停提示都靠这个。title 同时兜底原生 tooltip。 */
       aria-label={collapsed ? item.label : undefined}
-      title={collapsed ? item.label : undefined}
       className={`df-nav-item${active ? " is-active" : ""}`}
       data-collapsed={collapsed ? "true" : "false"}
+      style={{ width: collapsed ? 40 : "100%" }}
     >
       <span aria-hidden style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <LineIcon name={item.icon} />
       </span>
-      {!collapsed && <span>{item.label}</span>}
-      <FocusRing />
+      <span className="df-nav-label" aria-hidden={collapsed || undefined}>
+        {item.label}
+      </span>
     </button>
   );
+
+  return collapsed ? (
+    <Tooltip content={item.label} placement="right">
+      {button}
+    </Tooltip>
+  ) : button;
 }
 
 function RecordingStatus({
   recording,
   paused,
   idlePaused,
+  privacyPaused,
+  local,
   compact,
 }: {
   recording: boolean;
   paused: boolean;
   idlePaused: boolean;
+  privacyPaused: boolean;
+  local: boolean;
   compact: boolean;
 }) {
-  const state = !recording ? "idle" : paused ? "paused" : "recording";
-  const label = !recording ? "未录制" : idlePaused ? "空闲暂停" : paused ? "已暂停" : "录制中";
+  const state = !recording ? "idle" : paused || privacyPaused ? "paused" : "recording";
+  const label = !recording ? (local ? "本机计时" : "截图分析")
+    : idlePaused ? "空闲暂停" : paused ? "已暂停" : privacyPaused ? "隐私暂停" : local ? "本机计时中" : "录制中";
 
-  return (
-    <div className="df-rec-status" data-compact={compact ? "true" : "false"}
-      data-state={state} title={compact ? label : undefined} role="status">
+  const statusNode = (
+    <div
+      className="df-rec-status"
+      data-compact={compact ? "true" : "false"}
+      data-state={state}
+      role="status"
+    >
       <span aria-hidden className="df-rec-dot" />
-      <span key={state} className={compact ? "u-sr-only" : "df-feedback"}>{label}</span>
+      <span key={label} className={compact ? "u-sr-only" : "df-feedback"}>{label}</span>
     </div>
   );
+
+  return compact ? (
+    <Tooltip content={label} placement="right">
+      {statusNode}
+    </Tooltip>
+  ) : statusNode;
 }
 
 export function Shell({
   page,
   onPage,
   onError,
+  onOpenCommandPalette,
+  themeToggleRef,
   recordingControl,
   children,
 }: {
   page: PageKey;
   onPage: (p: PageKey) => void;
   onError?: (msg: string | null) => void;
+  onOpenCommandPalette?: () => void;
+  themeToggleRef?: MutableRefObject<(() => void) | null>;
   recordingControl: ReturnType<typeof useRecording>;
   children: ReactNode;
 }) {
-  /* 主题：后端是唯一真相，localStorage 只是启动缓存。
-
-     之前两边各存各的 —— 这里写 localStorage，设置页把 theme 读出来
-     又原样存回后端，谁也不通知谁。结果 Qt 那边改了主题这边不跟，
-     这边改了后端不知道，两套界面能显示成不同主题。
-
-     先用 localStorage 起（避免首帧闪一下错误的主题），
-     随后以后端为准校正。 */
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem("dayflow-theme");
-    return saved === "dark" ? "dark" : "light";
-  });
-  /* 用户在本轮里手动切过就不要被后端覆盖，
-     否则刚点的按钮会被一个迟到的响应改回去。 */
+  const [theme, setTheme] = useState(readTheme);
   const themeTouched = useRef(false);
   const themeVersion = useRef(0);
   const themeWrites = useRef<Promise<unknown>>(Promise.resolve());
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -134,61 +139,147 @@ export function Shell({
         if (t && !themeTouched.current) setTheme(t);
       })
       .catch(() => {
-        /* 后端没起来就用 localStorage 里的值，不要跳到亮色 */
+        /* 后端未就绪时保留 localStorage 主题 */
       });
   }, []);
 
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
+  const toggleTheme = useCallback(() => {
     themeTouched.current = true;
-    setTheme(next);
-    /* 立刻写回后端。失败要说出来 —— 静默失败正是「两个真相源」
-       最开始出现的原因。 */
-    const version = ++themeVersion.current;
-    themeWrites.current = themeWrites.current.then(() => {
-      if (version === themeVersion.current) return api.saveSettings({ theme: next });
-    }).catch((error) => {
-      if (version === themeVersion.current) {
-        onError?.(error instanceof ApiError ? error.message : "主题未能保存，请重试");
-      }
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      const version = ++themeVersion.current;
+      themeWrites.current = themeWrites.current.then(() => {
+        if (version === themeVersion.current) return api.saveSettings({ theme: next });
+      }).catch((error) => {
+        if (version === themeVersion.current) {
+          onErrorRef.current?.(error instanceof ApiError ? error.message : "主题未能保存，请重试");
+        }
+      });
+      return next;
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!themeToggleRef) return;
+    themeToggleRef.current = toggleTheme;
+    return () => { themeToggleRef.current = null; };
+  }, [themeToggleRef, toggleTheme]);
 
   const { state: rec, pending, run } = recordingControl;
+  const local = rec?.recordingMode !== "visual";
   const recording = rec?.isRecording ?? false;
   const paused = rec?.isPaused || rec?.isIdlePaused || false;
   const action = recording ? (paused ? "resume" : "pause") : "start";
-  const actionLabel = recording ? (paused ? "继续录制" : "暂停录制")
-    : rec?.needsSetup ? "连接分析模型" : "开始录制";
+  const verb = local ? "计时" : "录制";
+  const actionLabel = recording ? `${paused ? "继续" : "暂停"}${verb}`
+    : rec?.needsSetup ? "连接分析模型" : `开始${verb}`;
 
   const phone = useIsPhone();
   const rail = useIsNarrow();
-  /* 手机上不再有侧边栏，导航变成底部标签栏 */
   const collapsed = rail && !phone;
 
-  const mainAction = (
-    <Button variant="primary" fullWidth={!collapsed && !phone} size={phone ? "lg" : "md"}
-      onClick={() => run(action)} loading={pending === action} disabled={pending !== null && pending !== action}
-      title={actionLabel} aria-label={actionLabel}>
-      {collapsed ? (recording && !paused ? "Ⅱ" : "▶") : actionLabel}
+  const mainIcon = (
+    <IconSwap
+      active={recording && !paused}
+      size={15}
+      first={<LineIcon name="play" size={14} />}
+      second={<LineIcon name="pause" size={14} />}
+    />
+  );
+
+  const mainActionButton = (
+    <Button
+      variant="primary"
+      fullWidth={!collapsed && !phone}
+      size={phone ? "lg" : "md"}
+      onClick={() => run(action)}
+      loading={pending === action}
+      disabled={pending !== null && pending !== action}
+      aria-label={actionLabel}
+    >
+      {mainIcon}
+      {!collapsed && <span>{actionLabel}</span>}
     </Button>
   );
 
-  const stopAction = recording && (
-    <Button fullWidth={!collapsed && !phone} size="sm" onClick={() => run("stop")}
-      loading={pending === "stop"} disabled={pending !== null && pending !== "stop"}
-      title="停止录制" aria-label="停止录制">
-      {collapsed ? "■" : "停止录制"}
-    </Button>
+  const mainAction = collapsed ? (
+    <Tooltip content={actionLabel} placement="right">
+      {mainActionButton}
+    </Tooltip>
+  ) : mainActionButton;
+
+  const stopActionButton = (
+    <div className="df-fade-up" style={{ width: !collapsed && !phone ? "100%" : undefined }}>
+      <Button
+        fullWidth={!collapsed && !phone}
+        size="sm"
+        onClick={() => run("stop")}
+        loading={pending === "stop"}
+        disabled={pending !== null && pending !== "stop"}
+        aria-label={`停止${verb}`}
+      >
+        <LineIcon name="stop" size={13} />
+        {!collapsed && !phone && <span>停止{verb}</span>}
+      </Button>
+    </div>
+  );
+
+  const stopAction = phone ? (
+    <span style={{ visibility: recording ? undefined : "hidden" }}>
+      {stopActionButton}
+    </span>
+  ) : recording && (
+    collapsed ? (
+      <Tooltip content={`停止${verb}`} placement="right">
+        {stopActionButton}
+      </Tooltip>
+    ) : stopActionButton
   );
 
   const brand = (
     <div className="df-brand">
       <span aria-hidden className="df-brand-mark">
-        ◷
+        <i />
+        <i />
+        <i />
       </span>
-      {!collapsed && <span className="df-brand-name">Dayflow</span>}
+      <span className="df-brand-name" aria-hidden={collapsed || undefined}>Dayflow</span>
     </div>
+  );
+
+  const themeActionLabel = theme === "dark" ? "切换浅色" : "切换深色";
+  const themeAriaLabel = theme === "dark" ? "切换到亮色" : "切换到暗色";
+
+  const themeButton = (
+    <Button
+      variant="ghost"
+      fullWidth={!collapsed && !phone}
+      size="sm"
+      onClick={toggleTheme}
+      aria-label={themeAriaLabel}
+    >
+      <IconSwap
+        active={theme === "dark"}
+        size={15}
+        first={<LineIcon name="moon" size={15} />}
+        second={<LineIcon name="sun" size={15} />}
+      />
+      {!collapsed && !phone && <span>{themeActionLabel}</span>}
+    </Button>
+  );
+
+  const commandButton = onOpenCommandPalette && (
+    <button
+      type="button"
+      className="df-cmd-trigger"
+      aria-label="打开快捷命令面板"
+      aria-keyshortcuts="Control+K Meta+K"
+      onClick={onOpenCommandPalette}
+    >
+      <span className="df-command-prompt" aria-hidden>&gt;_</span>
+      <span className="df-cmd-trigger-text">快捷命令</span>
+      <Kbd>Ctrl K</Kbd>
+    </button>
   );
 
   return (
@@ -196,10 +287,17 @@ export function Shell({
       className="df-shell"
       data-layout={phone ? "bottom" : collapsed ? "rail" : "full"}
     >
-      {/* ── 侧边栏（宽屏 / 平板竖屏） ───────────────────── */}
       {!phone && (
         <nav className="df-sidebar" aria-label="主导航">
           {brand}
+
+          {commandButton && (
+            collapsed ? (
+              <Tooltip content="快捷命令 (Ctrl+K)" placement="right">
+                {commandButton}
+              </Tooltip>
+            ) : commandButton
+          )}
 
           {NAV.map((item) => (
             <NavItem
@@ -211,28 +309,26 @@ export function Shell({
             />
           ))}
 
-          <div style={{ flex: 1 }} />
+          <div className="df-sidebar-footer">
+            <div className="df-rec-panel">
+              <RecordingStatus
+                recording={recording}
+                paused={paused}
+                local={local}
+                idlePaused={!!rec?.isIdlePaused}
+                privacyPaused={!!rec?.isPrivacyPaused}
+                compact={collapsed}
+              />
+              {mainAction}
+              {stopAction}
+            </div>
 
-          <RecordingStatus recording={recording} paused={paused} idlePaused={!!rec?.isIdlePaused} compact={collapsed} />
-
-          {mainAction}
-          {stopAction}
-
-          <Button
-            variant="ghost"
-            fullWidth={!collapsed}
-            size="sm"
-            onClick={toggleTheme}
-            title={collapsed
-              ? (theme === "dark" ? "切换到亮色" : "切换到暗色")
-              : "切换主题"}
-            aria-label={theme === "dark" ? "切换到亮色" : "切换到暗色"}
-          >
-            {!collapsed && (theme === "dark" ? "☀ 亮色" : "☾ 暗色")}
-            <span className="df-rail-glyph" aria-hidden>
-              {theme === "dark" ? "☀" : "☾"}
-            </span>
-          </Button>
+            {collapsed ? (
+              <Tooltip content={themeActionLabel} placement="right">
+                {themeButton}
+              </Tooltip>
+            ) : themeButton}
+          </div>
         </nav>
       )}
 
@@ -244,9 +340,18 @@ export function Shell({
         {phone && (
           <div className="df-phone-dock">
             <div className="df-mobile-recording">
-              <RecordingStatus recording={recording} paused={paused} idlePaused={!!rec?.isIdlePaused} compact />
+              <RecordingStatus
+                recording={recording}
+                paused={paused}
+                local={local}
+                idlePaused={!!rec?.isIdlePaused}
+                privacyPaused={!!rec?.isPrivacyPaused}
+                compact
+              />
               {mainAction}
               {stopAction}
+              {themeButton}
+              {commandButton}
             </div>
             <nav className="df-bottom-nav" aria-label="主导航">
               {NAV.map((item) => (

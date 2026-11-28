@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'bridge/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt', 'bridge/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
             ${{ runner.os }}-pip-
@@ -35,15 +35,31 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r bridge/requirements.txt
+          python -m pip install -r requirements.txt -r requirements-dev.txt -r bridge/requirements.txt
 
       - name: Run tests
         run: |
           python -m pytest -q
 
+  frontend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Lint and test frontend
+        run: |
+          npm run lint
+          npm test
+          npm run build
+
   installer:
     runs-on: windows-latest
-    needs: test
+    needs: [test, frontend]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

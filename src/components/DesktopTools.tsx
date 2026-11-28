@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, saveTextFile } from "@/lib/api";
 import { fullDate, shiftDate, todayStr } from "@/lib/format";
 import { Button, Field, Input, Select, Toggle } from "@/components/ui";
+import { LineIcon } from "@/components/LineIcon";
 
 export function DataTools() {
   const today = todayStr();
@@ -44,7 +45,7 @@ export function DataTools() {
           <option value="custom">自选日期</option>
         </Select>
       </Field>
-      {period === "custom" && <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
+      {period === "custom" && <div className="df-fade-up" style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
         <Field label="起始日期" htmlFor="dashboard-start">
           <Input id="dashboard-start" type="date" value={customStart} max={customEnd || today} onChange={(event) => setCustomStart(event.target.value)} />
         </Field>
@@ -67,7 +68,10 @@ export function DataTools() {
         </Button>
       </div>
       <details className="df-details">
-        <summary>完整备份</summary>
+        <summary>
+          <span>完整备份</span>
+          <LineIcon name="chevron-down" size={14} className="df-disclosure-chevron" />
+        </summary>
         <div className="df-edit-fields">
         <div><Button loading={busy === "backup"} disabled={!!busy && busy !== "backup"}
           onClick={() => run("backup", async () => save(`Dayflow_${todayStr()}.json`, JSON.stringify(await api.getBackup(), null, 2), "json"))}>
@@ -98,7 +102,7 @@ export function DataTools() {
       </div>}
         </div>
       </details>
-      {message && <span className="df-feedback" role={message.error ? "alert" : "status"}>{message.text}</span>}
+      {message && <span className="df-feedback" data-error={message.error || undefined} role={message.error ? "alert" : "status"}>{message.text}</span>}
     </div>
   );
 }
@@ -106,31 +110,30 @@ export function DataTools() {
 export function LogTools() {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"read" | "open" | null>(null);
 
   async function run(openDirectory: boolean) {
     setError("");
-    setBusy(true);
+    setBusy(openDirectory ? "open" : "read");
     try {
       if (openDirectory) await api.openLogDirectory();
       else setContent((await api.getLogs()).content);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   return (
     <div style={{ display: "grid", gap: "var(--space-3)" }}>
       <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-        <Button loading={busy} onClick={() => run(false)}>{content === null ? "查看日志" : "刷新日志"}</Button>
-        <Button disabled={busy} onClick={() => run(true)}>打开日志目录</Button>
+        <Button loading={busy === "read"} disabled={busy === "open"} onClick={() => run(false)}>{content === null ? "查看日志" : "刷新日志"}</Button>
+        <Button loading={busy === "open"} disabled={busy === "read"} onClick={() => run(true)}>打开日志目录</Button>
       </div>
-      {error && <span role="alert">{error}</span>}
+      {error && <span className="df-feedback" role="alert" data-error="true">{error}</span>}
       {content !== null && (
-        <pre tabIndex={0} style={{ margin: 0, maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere", fontSize: "var(--text-xs)" }}>
+        <pre tabIndex={0} className="df-log-console">
           {content || "暂无日志"}
         </pre>
       )}

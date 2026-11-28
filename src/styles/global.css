@@ -62,11 +62,13 @@ textarea {
 .df-field {
   font-size: var(--text-sm);
   height: 40px;
+  border: 1px solid var(--border-default);
 }
 
 @media (max-width: 639px) {
   .df-field,
-  .df-search {
+  .df-search,
+  .df-stepper-input {
     font-size: 16px;
   }
 }
@@ -107,43 +109,13 @@ svg {
   outline: none;
 }
 
+/* 统一走原生 :focus-visible（保留各控件自身圆角，避免自定义焦点环与原生 outline 重叠） */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--radius-xs);
 }
 
-/* 焦点环的 authored 过渡。
-   为什么不用 outline 过渡：元素自己的 transition 简写会整体
-   覆盖它 —— 实测 8 处内联 transition 全部让焦点环退回硬切。
-
-   为什么不用 ::focus-visible::after：Vite 的 CSS 压缩器会把
-   `::focus-visible::after` 压成 `::focus-visible:after`。
-   Chrome 碰巧认单冒号，但 CSS 规范里没有这个形式，
-   换个浏览器或者换个压缩器就静默失效 —— 实测就是 content:none。
-
-   所以用一个真实的 span：它在 JSX 里，不会被压缩器改写。 */
-.df-focus-ring {
-  position: absolute;
-  inset: -3px;
-  border-radius: inherit;
-  box-shadow: 0 0 0 2px var(--accent-ring);
-  opacity: 0;
-  transform: scale(var(--motion-press-scale));
-  pointer-events: none;
-  transition: opacity var(--dur-base) var(--ease-out),
-              transform var(--dur-base) var(--ease-out);
-}
-
-:focus-visible > .df-focus-ring,
-.df-focus-ring[data-on="true"] {
-  opacity: 1;
-  transform: scale(1);
-}
-
-/* <input> / <select> 是替换元素，塞子节点不会渲染。
-   所以输入框的焦点环走 border + box-shadow 过渡 ——
-   不用伪元素，避免 ::focus-visible::after 被压缩器改写。 */
+/* 输入框焦点环走 border + box-shadow 过渡 */
 .df-field {
   transition: border-color var(--dur-base) var(--ease-out),
               box-shadow var(--dur-base) var(--ease-out);
@@ -217,23 +189,12 @@ h4 { font-size: var(--text-md); }
 
 /* ── 工具类 ────────────────────────────────────────────────
    只放跨组件复用的。一次性样式请写在组件里。 */
-.u-truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .u-line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.u-mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
 }
 
 .u-tabular {
@@ -253,8 +214,7 @@ h4 { font-size: var(--text-md); }
   border: 0;
 }
 
-/* ── 动效关键帧 ────────────────────────────────────────────
-   只保留真正在用的几个。不要为了「有动画」而堆 keyframes。 */
+/* ── 动效关键帧（统一 2 曲线 + 5 档时长，仅动 transform / opacity） ── */
 @keyframes df-spin {
   to { transform: rotate(360deg); }
 }
@@ -269,10 +229,20 @@ h4 { font-size: var(--text-md); }
   to   { opacity: 1; }
 }
 
-/* Route changes move content only; navigation and window chrome stay anchored. */
+@keyframes df-slide-prev {
+  from { opacity: 0.65; transform: translateX(calc(-1 * var(--motion-distance))); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes df-slide-next {
+  from { opacity: 0.65; transform: translateX(var(--motion-distance)); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Keep the toolbar and scroll geometry still on route changes. */
 @keyframes df-page-in {
-  from { opacity: 0; transform: translateY(var(--motion-distance)); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0.8; }
+  to   { opacity: 1; }
 }
 
 .df-page {
@@ -283,76 +253,145 @@ h4 { font-size: var(--text-md); }
   flex-direction: column;
 }
 
+.df-fade-up {
+  animation: df-fade-up var(--dur-fast) var(--ease-out);
+}
+
 .df-overlay,
 .df-toast {
   opacity: 1;
   transition: opacity var(--dur-menu) var(--ease-out);
 }
 
+.df-overlay,
+.df-toast {
+  --surface-offset: var(--motion-distance);
+}
+
+.df-toast.df-error-toast {
+  --surface-offset: calc(-1 * var(--motion-distance));
+}
+
 .df-dialog,
 .df-toast {
   transform: none;
-  transition: transform var(--dur-menu) var(--ease-out),
-              opacity var(--dur-menu) var(--ease-out);
 }
 
+.df-dialog { transition: transform var(--dur-menu) var(--ease-out); }
+.df-toast { transition: transform var(--dur-menu) var(--ease-out), opacity var(--dur-menu) var(--ease-out); }
+
+.df-overlay:not([data-entered]),
 .df-overlay[data-closing],
+.df-toast:not([data-entered]),
 .df-toast[data-closing] {
   opacity: 0;
-  transition-duration: var(--dur-exit);
 }
 
+.df-overlay:not([data-entered]) .df-dialog,
 .df-overlay[data-closing] .df-dialog,
+.df-toast:not([data-entered]),
 .df-toast[data-closing] {
-  transform: translateY(var(--motion-distance)) scale(var(--motion-panel-scale));
-  transition-duration: var(--dur-exit);
+  transform: translateY(var(--surface-offset)) scale(var(--motion-panel-scale));
+}
+
+.df-overlay[data-closing] { transition: opacity var(--dur-exit) var(--ease-exit); }
+.df-overlay[data-closing] .df-dialog {
+  transition: transform var(--dur-exit) var(--ease-exit);
+  pointer-events: none;
+}
+.df-toast[data-closing] {
+  transition: transform var(--dur-exit) var(--ease-exit), opacity var(--dur-exit) var(--ease-exit);
   pointer-events: none;
 }
 
-@starting-style {
-  .df-overlay,
-  .df-toast { opacity: 0; }
-  .df-dialog,
-  .df-toast { transform: translateY(var(--motion-distance)) scale(var(--motion-panel-scale)); }
-}
-
-.df-dialog {
-  max-height: calc(100dvh - var(--space-8));
-  overflow: auto;
-}
-
-/* 对话框：桌面 460px，窄屏收到视口内。
-   写成内联 width 的话媒体查询赢不了，320px 下对话框会
-   撑破视口 —— 固定宽度永远赢不了响应式。 */
 .df-dialog {
   width: 460px;
   max-width: calc(100vw - var(--space-8));
+  max-height: calc(100dvh - var(--space-8));
+  overflow: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.df-dialog[data-size="lg"] {
+  width: 540px;
+}
+
+.df-dialog[data-flush="true"] {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.df-dialog-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.df-dialog-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.df-dialog-desc {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.df-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.df-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
 }
 
 @media (max-width: 480px) {
-  .df-dialog {
+  .df-dialog:not([data-flush="true"]) {
     padding: var(--space-4);
   }
 }
 
-/* 空状态：比页面入场更轻。它是「没什么可看」的地方，
-   不该用和正常内容一样的分量去登场。 */
+/* 空状态：比页面入场更轻。 */
 .df-page-in-soft {
   animation: df-fade-up var(--dur-reveal) var(--ease-out);
 }
 
-/* A static skeleton keeps long waits legible without continuous repainting. */
+/* 静态骨架屏：避免长等待时持续闪烁重绘 */
 .df-skeleton {
   background: var(--bg-sunken);
   border-radius: var(--radius-sm);
 }
 
-/* 撤销倒计时：6 秒内从满宽缩到 0。
-   用户不知道还剩多久，有条线才知道该不该现在按撤销。 */
+/* 撤销倒计时：10 秒内从满宽缩到 0，与 --undo-window / UNDO_MS 严格一致。
+   悬停或聚焦 Toast 时暂停倒计时，防止用户移动鼠标瞬间错失撤销。 */
 .df-undo-timer {
   background: var(--accent);
   transform-origin: left center;
   animation: df-undo-timer var(--undo-window) linear forwards;
+}
+
+.df-undo-toast[data-paused="true"] .df-undo-timer {
+  animation-play-state: paused;
+}
+
+.df-undo-reduced-hint {
+  display: none;
 }
 
 @keyframes df-undo-timer {
@@ -361,12 +400,26 @@ h4 { font-size: var(--text-md); }
 }
 
 .df-handoff { position: relative; }
+.df-handoff-content { transition: opacity var(--dur-fast) var(--ease-out); }
+.df-handoff [data-reloading] { opacity: 0.55; transition-duration: 0ms; }
+.df-reload-hint:not(:empty) {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
 .df-skeleton-out {
   position: absolute;
   inset: 0;
   overflow: clip;
   pointer-events: none;
-  animation: df-skeleton-out var(--dur-handoff) var(--ease-out) forwards;
+  animation: df-skeleton-out var(--dur-handoff) var(--ease-exit) forwards;
 }
 
 .df-content-in {
@@ -378,13 +431,23 @@ h4 { font-size: var(--text-md); }
   to   { opacity: 0; }
 }
 
-.df-feedback,
-.df-value-change,
-.df-reveal {
+.df-feedback {
   animation: df-fade-in var(--dur-reveal) var(--ease-out);
 }
 
-.df-value-change { font-variant-numeric: tabular-nums; }
+.df-value-change {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  animation: df-page-in var(--dur-reveal) var(--ease-out);
+}
+
+.df-date-shift {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  animation: df-fade-in var(--dur-fast) var(--ease-out);
+}
+.df-date-shift[data-dir="prev"] { animation: df-slide-prev var(--dur-fast) var(--ease-out); }
+.df-date-shift[data-dir="next"] { animation: df-slide-next var(--dur-fast) var(--ease-out); }
 
 .df-wait {
   display: flex;
@@ -398,8 +461,10 @@ h4 { font-size: var(--text-md); }
 
 .df-selection-mark {
   opacity: 0;
+  transform: scale(0.55);
   font-size: var(--text-2xs);
-  transition: opacity var(--dur-base) var(--ease-out);
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
 }
 
 .df-inline-notice {
@@ -413,7 +478,11 @@ h4 { font-size: var(--text-md); }
   font-size: var(--text-sm);
 }
 
-.df-report-date[aria-current] .df-selection-mark { opacity: 1; }
+.df-report-date[aria-current] .df-selection-mark {
+  opacity: 1;
+  transform: scale(1);
+  color: var(--accent);
+}
 
 .df-page[hidden] { display: none; }
 
@@ -428,19 +497,63 @@ h4 { font-size: var(--text-md); }
   min-height: 40px;
   border-radius: var(--radius-md);
   text-align: start;
-  color: var(--text-primary);
-  transition: background-color var(--dur-base) var(--ease-out);
+  color: var(--text-secondary);
+  touch-action: manipulation;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .df-report-date:hover:not([aria-current]) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.df-report-date:active {
+  transform: scale(var(--motion-press-scale));
 }
 
 .df-report-date[aria-current] {
   background: var(--accent-subtle);
   color: var(--accent-text);
+  font-weight: var(--weight-semibold);
 }
 
 .df-report-weekday,
 .df-settings-description {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+
+.df-evidence-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.df-evidence-list .df-button-label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.df-evidence-link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border-radius: var(--radius-xs);
+  transition: opacity var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+.df-evidence-link:hover { opacity: 0.78; }
+.df-evidence-link:active { transform: scale(var(--motion-press-scale)); }
+
+.df-row[data-evidence] {
+  background: var(--accent-subtle);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-radius: var(--radius-md);
 }
 
 .df-context-note {
@@ -461,7 +574,31 @@ h4 { font-size: var(--text-md); }
 
 .df-details p { margin: var(--space-2) 0; }
 .df-details summary,
-.df-settings-section > summary { cursor: pointer; }
+.df-settings-section > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.df-details summary::-webkit-details-marker,
+.df-settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.df-disclosure-chevron {
+  color: var(--text-tertiary);
+  transition: transform var(--dur-base) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out);
+}
+details[open] > summary .df-disclosure-chevron {
+  transform: rotate(180deg);
+  color: var(--text-secondary);
+}
+details[open] > summary ~ * {
+  animation: df-fade-up var(--dur-fast) var(--ease-out);
+}
 
 .df-settings-section {
   border: 1px solid var(--border-subtle);
@@ -499,6 +636,7 @@ h4 { font-size: var(--text-md); }
 
 .df-edit-fields {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
   min-width: 0;
   border: 0;
@@ -506,9 +644,18 @@ h4 { font-size: var(--text-md); }
   margin: 0;
 }
 
+.df-edit-fields .df-field {
+  max-width: 100%;
+}
+
 .df-edit-fields:disabled { opacity: 0.66; }
 
 .df-undo-toast { bottom: var(--space-6); max-width: calc(100vw - var(--space-5)); }
+.df-error-toast {
+  top: var(--space-4);
+  max-width: calc(100vw - var(--space-5));
+  z-index: calc(var(--z-toast) + 1);
+}
 .df-mobile-recording {
   display: flex;
   align-items: center;
@@ -516,8 +663,18 @@ h4 { font-size: var(--text-md); }
 }
 
 @media (max-width: 619px) {
-  .df-undo-toast { bottom: calc(112px + env(safe-area-inset-bottom)); }
-  .df-mobile-recording .df-btn:first-of-type { flex: 1; }
+  .df-undo-toast { bottom: calc(128px + env(safe-area-inset-bottom)); }
+  .df-mobile-recording > .df-btn:first-of-type { flex: 1; }
+  .df-mobile-recording .df-cmd-trigger {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    justify-content: center;
+    padding: 0;
+    margin: 0;
+  }
+  .df-mobile-recording .df-cmd-trigger-text,
+  .df-mobile-recording .df-cmd-trigger .df-kbd { display: none; }
 }
 
 .df-fill {
@@ -533,22 +690,125 @@ h4 { font-size: var(--text-md); }
 }
 
 .df-busy-content > * { grid-area: 1 / 1; }
-.df-busy-content > [data-hidden] { opacity: 0; }
-
 .df-button-label {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   white-space: nowrap;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+.df-button-label[data-hidden] {
+  opacity: 0;
+  transform: scale(var(--motion-press-scale));
+  pointer-events: none;
+  transition-delay: var(--dur-tactile);
+}
+
+.df-busy-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.84);
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+.df-busy-spinner[data-visible] {
+  opacity: 1;
+  transform: scale(1);
+  transition-delay: var(--dur-tactile);
+}
+
+/* 同位双态图标交叉淡化（主题日月、播放暂停、复制勾选） */
+.df-icon-swap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.df-icon-swap > span {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+.df-icon-swap[data-swapped="false"] .df-icon-swap-a { opacity: 1; transform: scale(1); }
+.df-icon-swap[data-swapped="false"] .df-icon-swap-b { opacity: 0; transform: scale(0.82); pointer-events: none; }
+.df-icon-swap[data-swapped="true"] .df-icon-swap-a { opacity: 0; transform: scale(0.82); pointer-events: none; }
+.df-icon-swap[data-swapped="true"] .df-icon-swap-b { opacity: 1; transform: scale(1); }
+
+/* 滑动胶囊分段控件：等宽网格 + 纯 GPU transform 平移，零重排、随时可打断 */
+.df-segmented {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+  isolation: isolate;
+}
+.df-segmented-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--seg-count, 2));
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  transform: translateX(calc(var(--seg-index, 0) * 100%));
+  transition: transform var(--dur-base) var(--ease-out);
+  pointer-events: none;
+  z-index: 0;
+}
+.df-segmented-item {
+  position: relative;
+  z-index: 1;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  touch-action: manipulation;
+  transition: color var(--dur-fast) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+.df-segmented.is-compact .df-segmented-item {
+  height: 26px;
+  padding: 0 12px;
+}
+.df-segmented-item[data-active="true"] {
+  color: var(--text-primary);
+}
+@media (hover: hover) {
+  .df-segmented-item:hover:not([data-active="true"]) {
+    color: var(--text-secondary);
+  }
+}
+.df-segmented-item:active {
+  transform: scale(var(--motion-press-scale));
 }
 
 .df-rec-status .df-rec-dot {
   background: var(--text-placeholder);
-  transition: background var(--dur-base) var(--ease-out);
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
-.df-rec-status[data-state="recording"] .df-rec-dot { background: var(--recording); }
+.df-rec-status[data-state="recording"] .df-rec-dot {
+  background: var(--recording);
+}
 .df-rec-status[data-state="paused"] .df-rec-dot { background: var(--warning); }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -562,50 +822,100 @@ h4 { font-size: var(--text-md); }
   animation: df-spin var(--dur-spin) linear infinite;
 }
 
-/* ── 应用外壳：三个宽度阶段 ──────────────────────────────────
-   断点来自实测，不是设备名：
-   200px 侧栏 + 560px 最小可读内容 = 760px 导航必须收起；
-   再窄内容顶到 560px 以下，导航改为底部标签栏。
-
-   断点值与 src/lib/useMediaQuery.ts 里的常量一致，
-   那边控制组件渲染，这边控制像素细节。 */
+/* ── 应用外壳（三个宽度阶段）─────────────────────────────────
+   宽屏（>=1000px）：完整侧栏与主工作区；
+   窄屏（620-999px）：56px 居中图标栏 + Tooltip；
+   手机（<620px）：满幅内容 + 底部拇指区 Dock。 */
 .df-shell {
   display: flex;
   height: 100vh;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
   overflow: hidden;
-  background: var(--bg-canvas);
+  background: var(--bg-inset);
 }
 
 /* 底部标签栏模式下改成纵向：内容在上，导航钉在底部 */
 .df-shell[data-layout="bottom"] {
   flex-direction: column;
+  background: var(--bg-canvas);
 }
 
-/* 完整侧栏是默认形态：200px 固定宽。
-   写成 data-layout 显式规则而不是依赖「没有 rail 规则」，
-   断点边界上才不会因为选择器顺序而闪一下。 */
 .df-shell[data-layout="full"] .df-sidebar {
-  width: 200px;
+  width: var(--sidebar-width);
 }
 
 .df-sidebar {
-  width: 200px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
   background: var(--bg-sidebar);
-  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  padding: var(--space-4) var(--space-3);
-  gap: 2px;
-
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  gap: var(--space-1);
+  border-inline-end: 1px solid var(--border-default);
 }
 
-/* 图标栏：只留图标，文字进 aria-label + title */
+.df-cmd-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-align: left;
+  touch-action: manipulation;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              border-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .df-cmd-trigger:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-default);
+    color: var(--text-primary);
+  }
+}
+
+.df-cmd-trigger:active {
+  transform: scale(var(--motion-press-scale));
+}
+
+.df-command-prompt {
+  flex-shrink: 0;
+  color: var(--accent-text);
+  font: var(--weight-semibold) var(--text-sm) var(--font-mono);
+}
+
+.df-cmd-trigger-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-shell[data-layout="rail"] .df-cmd-trigger {
+  width: 40px;
+  padding: 0;
+  justify-content: center;
+}
+
+.df-shell[data-layout="rail"] .df-cmd-trigger-text,
+.df-shell[data-layout="rail"] .df-cmd-trigger .df-kbd {
+  display: none;
+}
+
+/* 图标栏：只留图标，文字进 Tooltip + aria-label */
 .df-shell[data-layout="rail"] .df-sidebar {
-  width: 56px;
-  padding: var(--space-4) 6px;
+  width: var(--rail-width);
+  padding-inline: var(--space-1);
   align-items: center;
 }
 
@@ -619,14 +929,8 @@ h4 { font-size: var(--text-md); }
   opacity: 0;
 }
 
-.df-brand-name {
-  transition: opacity var(--dur-tactile) var(--ease-out);
-}
-
 .df-shell[data-layout="rail"] .df-brand-name {
-  opacity: 0;
-  width: 0;
-  overflow: hidden;
+  display: none;
 }
 
 .df-shell[data-layout="rail"] .df-brand,
@@ -636,7 +940,7 @@ h4 { font-size: var(--text-md); }
 }
 
 /* 56px 放不下「停止录制」四个字 —— 实测被压成竖排，
-   一个字一行。图标栏里主操作收成图标 + tooltip。 */
+   一个字一行。图标栏里主操作收成图标 + Tooltip。 */
 .df-shell[data-layout="rail"] .df-sidebar .df-btn {
   width: 40px;
   min-width: 40px;
@@ -644,91 +948,138 @@ h4 { font-size: var(--text-md); }
   padding: 0;
   overflow: hidden;
   white-space: nowrap;
-}
-
-.df-rail-glyph {
-  display: none;
-}
-
-.df-shell[data-layout="rail"] .df-sidebar .df-btn > *:not(.df-rail-glyph) {
-  display: none;
-}
-
-.df-shell[data-layout="rail"] .df-sidebar .df-rail-glyph {
-  display: inline;
   font-size: var(--text-md);
-  line-height: 1;
+}
+
+.df-sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border-strong);
+}
+
+.df-shell[data-layout="rail"] .df-sidebar-footer {
+  align-items: center;
+  width: 100%;
+}
+
+.df-rec-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.df-shell[data-layout="rail"] .df-rec-panel {
+  align-items: center;
 }
 
 .df-main {
   flex: 1;
-  /* 关键：不加这一行，flex 子项的 min-width 默认是 auto，
-     内容过宽时会把 main 撑破而不是内部滚动。
-     旧版这行有了，统计页的越界元素是 165 个 —— 根因在
-     页面内部的固定宽度，不在 shell。 */
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-canvas);
+  overflow: hidden;
 }
 
 .df-brand {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2) var(--space-5);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-6);
 }
 
 .df-brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--on-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-xs);
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  width: 24px;
+  height: 24px;
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 
+.df-brand-mark > i {
+  height: 4px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.df-brand-mark > i:nth-child(2) { width: 16px; }
+.df-brand-mark > i:nth-child(3) { width: 8px; }
+
 .df-brand-name {
-  font-size: var(--text-md);
+  font-size: 20px;
+  line-height: 28px;
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.04em;
 }
 
 .df-nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   height: 40px;
   padding: 0 var(--space-3);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--text-sm);
   font-weight: var(--weight-normal);
   text-align: left;
   cursor: pointer;
-  /* 焦点环的过渡列在这里也要写一遍 ——
-     组件自己的 transition 会整体覆盖 :focus-visible 那条，
-     只写 background/color 的话焦点环退回硬切。 */
-  transition: background var(--dur-base) var(--ease-out),
-              color var(--dur-base) var(--ease-out),
-              outline-color var(--dur-base) var(--ease-out),
-              outline-offset var(--dur-base) var(--ease-out);
+  touch-action: manipulation;
+  transition: background var(--dur-tactile) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out),
+              outline-color var(--dur-fast) var(--ease-out),
+              outline-offset var(--dur-fast) var(--ease-out);
+}
+
+.df-nav-item::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleY(0.35);
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+  pointer-events: none;
 }
 
 .df-nav-item.is-active {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: var(--weight-semibold);
+}
+
+.df-bottom-nav .df-nav-item.is-active {
+  background: transparent;
+  color: var(--accent-text);
+}
+
+.df-nav-item.is-active::after {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.df-nav-item:active {
+  transform: scale(var(--motion-press-scale));
 }
 
 @media (hover: hover) {
   .df-nav-item:hover:not(.is-active) {
     background: var(--bg-sidebar-hover);
+    color: var(--text-primary);
   }
 }
 
@@ -737,13 +1088,36 @@ h4 { font-size: var(--text-md); }
   justify-content: center;
 }
 
+.df-nav-label {
+  white-space: nowrap;
+  transition: opacity var(--dur-tactile) var(--ease-out);
+}
+
+.df-nav-item[data-collapsed="true"] .df-nav-label {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.df-bottom-nav .df-nav-item::after {
+  left: 16px;
+  right: 16px;
+  top: 2px;
+  bottom: auto;
+  width: auto;
+  height: 2.5px;
+  transform: scaleX(0.35);
+}
+
+.df-bottom-nav .df-nav-item.is-active::after {
+  transform: scaleX(1);
+}
+
 .df-rec-status {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-2);
-  border-radius: var(--radius-md);
+  padding: var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   background: transparent;
@@ -803,16 +1177,6 @@ h4 { font-size: var(--text-md); }
   bottom: -8px;
 }
 
-/* 双向扩展：左右也没有紧邻控件时才用 */
-.df-hit::before {
-  content: "";
-  position: absolute;
-  left: -8px;
-  right: -8px;
-  top: -11px;
-  bottom: -11px;
-}
-
 /* 开关：24px 高，扩 10px 刚好到 44，
    和相邻 40px 高的输入框视觉上对得上。 */
 .df-hit-toggle::before {
@@ -822,11 +1186,6 @@ h4 { font-size: var(--text-md); }
   right: 0;
   top: -10px;
   bottom: -10px;
-}
-
-/* 这些容器的子元素要能定位伪元素 */
-.df-hit-host {
-  position: relative;
 }
 
 /* 导航项、录制、主题：直接长到 40px */
@@ -864,20 +1223,27 @@ h4 { font-size: var(--text-md); }
    窄窗口的桌面机同样没有 hover，触屏平板则可能很宽。 */
 .df-hover-only {
   opacity: 0;
-  transition: opacity var(--dur-base) var(--ease-out);
+  transform: translateX(var(--motion-distance));
+  transition: opacity var(--dur-tactile) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
 }
 
 .df-hover-only:focus-within {
   opacity: 1;
+  transform: translateX(0);
 }
 
 @media (hover: hover) {
-  .df-row:hover .df-hover-only { opacity: 1; }
+  .df-row:hover .df-hover-only {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @media (hover: none) {
   .df-hover-only {
     opacity: 1;
+    transform: none;
   }
 }
 
@@ -889,14 +1255,15 @@ h4 { font-size: var(--text-md); }
   }
 }
 
-/* ── 工具栏：宽屏一行，窄屏两行 ──────────────────────────────
-   日期导航、搜索、统计数字、日报按钮——四件事挤一行时，
-   320px 下搜索框右边界到 429px，直接跑出屏幕。 */
+/* ── 页面工具栏 ──────────────────────────────────────────── */
 .df-toolbar {
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  min-height: var(--toolbar-height);
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-3) var(--space-6);
+  background: var(--bg-canvas);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
@@ -911,10 +1278,6 @@ h4 { font-size: var(--text-md); }
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: 0;
-}
-
-.df-toolbar-search {
   min-width: 0;
 }
 
@@ -940,24 +1303,31 @@ h4 { font-size: var(--text-md); }
   min-width: 0;
 }
 
-.df-toolbar-count {
-  white-space: nowrap;
-}
-
 .df-search {
   min-width: 0;
   /* 搜索框是手写的（左侧要留白给放大镜图标），没挂 .df-field。
      所以字号、高度、边框、焦点环都得自己声明一份。
      这些属性必须留在样式表：内联简写会赢过 :focus-visible
      —— 实测内联 border 简写让聚焦时边框不变色。 */
-  font-size: var(--text-sm);
-  height: 34px;
-  background: var(--bg-surface);
+  display: block;
+  width: 100%;
+  padding: 0 var(--space-3) 0 var(--space-8);
+  font-size: var(--text-base);
+  height: 36px;
+  background: var(--bg-sunken);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   transition: border-color var(--dur-base) var(--ease-out),
               box-shadow var(--dur-base) var(--ease-out);
+}
+
+.df-search[data-filled="true"] {
+  padding-inline-end: var(--space-8);
+}
+
+.df-search::placeholder {
+  color: var(--text-placeholder);
 }
 
 .df-search:focus-visible {
@@ -973,6 +1343,9 @@ h4 { font-size: var(--text-md); }
 .df-page-title {
   white-space: nowrap;
   flex-shrink: 0;
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.025em;
 }
 
 .df-page-subtitle {
@@ -1009,7 +1382,7 @@ h4 { font-size: var(--text-md); }
   border-bottom: 1px solid var(--border-subtle);
 }
 
-/* 手机：第一行日期 + 日报，第二行搜索占满 */
+/* 窄屏工具栏允许当前页操作换行 */
 .df-toolbar[data-stacked="true"] {
   padding: var(--space-3) var(--space-4);
   gap: var(--space-2);
@@ -1019,43 +1392,201 @@ h4 { font-size: var(--text-md); }
   flex-wrap: wrap;
 }
 
-.df-toolbar[data-stacked="true"] .df-datelabel {
-  font-size: var(--text-sm);
-}
-
 /* ── 时间轴条目：宽屏三列，窄屏压缩时间列 ────────────────────
    旧版给时间列固定 92px 且不可收缩，320px 下它和操作按钮
    一起把主体挤到只剩 30px，标题一个字一行 —— 不是换行，
    是没法读。窄屏下时间列让位，主体优先。 */
 .df-row-list {
-  --row-time-width: 92px;
+  --row-time-width: 84px;
   --row-gap: var(--space-4);
-  --row-inset: var(--space-6);
+  --row-pad: var(--space-3);
   position: relative;
-  padding: var(--space-4) var(--space-6) var(--space-10);
+  margin-inline: calc(-1 * var(--row-pad));
+  padding: var(--space-2) 0 var(--space-8);
 }
 
 .df-row-list::before {
   content: "";
   position: absolute;
-  left: calc(var(--row-inset) + var(--row-time-width) + var(--row-gap) + 5px);
+  left: calc(var(--row-pad) + var(--row-time-width) + var(--row-gap) + 5px);
   pointer-events: none;
-  top: 0;
-  bottom: var(--space-10);
+  top: var(--space-3);
+  bottom: var(--space-8);
   width: 1px;
   background: var(--timeline-track);
 }
 
 .df-row {
   display: flex;
-  gap: var(--space-4);
-  padding: var(--space-3) 0;
+  gap: var(--row-gap);
+  padding: var(--space-3) var(--row-pad);
+  border-radius: var(--radius-xs);
   position: relative;
   align-items: flex-start;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              opacity var(--dur-exit) var(--ease-exit),
+              transform var(--dur-exit) var(--ease-exit);
+}
+
+@media (hover: hover) {
+  .df-row:hover:not([data-evidence]) {
+    background: var(--bg-hover);
+  }
+}
+
+.df-row[data-removing="true"] {
+  opacity: 0;
+  transform: scale(var(--motion-panel-scale));
+  pointer-events: none;
 }
 
 .df-row:not(:first-child) {
   border-top: 1px solid var(--border-subtle);
+}
+
+/* 高频小控件与图表微交互（全走 CSS，零内联 JS 样式修改） */
+.df-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: transparent;
+  line-height: 1;
+  position: relative;
+  touch-action: manipulation;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+.df-icon-btn:disabled { opacity: 0.35; }
+@media (hover: hover) {
+  .df-icon-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+.df-icon-btn:active:not(:disabled) {
+  transform: scale(var(--motion-press-scale));
+}
+
+.df-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-normal);
+  white-space: nowrap;
+  flex-shrink: 0;
+  position: relative;
+  touch-action: manipulation;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out),
+              border-color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+.df-pill[aria-pressed="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+  font-weight: var(--weight-semibold);
+}
+@media (hover: hover) {
+  .df-pill:hover:not([aria-pressed="true"]) {
+    background: var(--bg-hover);
+    border-color: var(--border-default);
+  }
+}
+.df-pill:active {
+  transform: scale(var(--motion-press-scale));
+}
+
+.df-search-wrap {
+  position: relative;
+}
+.df-search-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-placeholder);
+  pointer-events: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.df-search-wrap:focus-within .df-search-icon {
+  color: var(--accent-text);
+}
+.df-search-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  animation: df-fade-in var(--dur-tactile) var(--ease-out);
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+@media (hover: hover) {
+  .df-search-clear:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+.df-search-clear:active {
+  transform: translateY(-50%) scale(var(--motion-press-scale));
+}
+
+/* 统计图表 GPU 合成过渡：仅动 transform / opacity */
+.df-hourly-bar {
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  transform-origin: bottom center;
+  transition: transform var(--dur-spatial) var(--ease-out),
+              opacity var(--dur-spatial) var(--ease-out);
+}
+
+.df-donut-arc {
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.df-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              opacity var(--dur-fast) var(--ease-out);
+}
+@media (hover: hover) {
+  .df-legend-row:hover {
+    background: var(--bg-hover);
+  }
+}
+
+@media (hover: hover) {
+  .df-cal-cell:hover {
+    outline: 1px solid var(--accent-text);
+    outline-offset: 1px;
+  }
 }
 
 /* Keep off-screen rows out of layout and paint during long desktop scrolls.
@@ -1068,11 +1599,12 @@ h4 { font-size: var(--text-md); }
 }
 
 .df-row-time {
-  width: 92px;
+  width: var(--row-time-width);
   flex-shrink: 0;
   padding-top: 2px;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1081,7 +1613,7 @@ h4 { font-size: var(--text-md); }
   height: 10px;
   margin-top: 5px;
   border: 2px solid var(--bg-canvas);
-  border-radius: 50%;
+  border-radius: 2px;
   flex-shrink: 0;
   position: relative;
   z-index: 1;
@@ -1113,12 +1645,14 @@ h4 { font-size: var(--text-md); }
   }
 
   .df-actions-icon {
-    display: inline;
+    display: inline-flex;
+    align-items: center;
   }
 
   /* 窄屏下操作常驻可见 —— 它们是唯一能改数据的入口 */
   .df-row-actions {
     opacity: 1;
+    transform: none;
   }
 }
 
@@ -1163,48 +1697,22 @@ h4 { font-size: var(--text-md); }
   .df-row-list {
     --row-time-width: 52px;
     --row-gap: var(--space-3);
-    --row-inset: var(--space-4);
-    padding: var(--space-4) var(--space-4) var(--space-10);
-  }
-
-  .df-row {
-    gap: var(--space-3);
-  }
-
-  .df-row-time {
-    width: 52px;
+    --row-pad: var(--space-2);
+    padding: var(--space-2) 0 var(--space-6);
   }
 }
 
-.u-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-
-/* ── 按钮交互态 ────────────────────────────────────────────
-   悬停和按下走 CSS class，不写在组件的 style 里。
-   内联 style 优先级高于样式表，会把 :hover 和 :active 全部盖掉 ——
-   实测按下按钮时 transform 恒为 none，就是因为这个。
-
-   :active 只在真正按住的瞬间存在，键盘触发时不生效。
-   所以另加 :focus-visible 的轻微缩放，键盘用户也有同等反馈。 */
 .df-btn {
   background: var(--df-button-bg);
   transition: background var(--dur-tactile) var(--ease-out),
               border-color var(--dur-tactile) var(--ease-out),
               transform var(--dur-tactile) var(--ease-out),
-              /* 焦点环也要过渡。组件的 transition 简写会整体
-                 覆盖 :focus-visible 那条，漏掉就退回硬切。 */
               outline-color var(--dur-base) var(--ease-out),
               outline-offset var(--dur-base) var(--ease-out);
+}
+
+.df-btn[data-variant="primary"] {
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.14), inset 0 1px 0 rgb(255 255 255 / 0.16);
 }
 
 @media (hover: hover) {
@@ -1234,6 +1742,944 @@ h4 { font-size: var(--text-md); }
   cursor: not-allowed;
 }
 
+/* ── 统一原语组件样式（Card / Badge / Chip / Kbd / Tooltip / Stepper / Toast / Command / ChartPopover） ── */
+
+.df-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.df-card[data-variant="inset"] {
+  background: var(--bg-sunken);
+}
+
+.df-card[data-variant="flush"] {
+  padding: 0;
+  overflow: hidden;
+}
+
+.df-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.df-card-head-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.df-card-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.df-card-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.df-card-desc {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.df-card-head-action {
+  flex-shrink: 0;
+}
+
+.df-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.df-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.df-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+.df-badge[data-tone="accent"]  { background: var(--accent-subtle); color: var(--accent-text); }
+.df-badge[data-tone="success"] { background: var(--success-bg); color: var(--success); }
+.df-badge[data-tone="warning"] { background: var(--warning-bg); color: var(--warning); }
+.df-badge[data-tone="danger"]  { background: var(--danger-bg); color: var(--danger); }
+
+.df-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.df-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ── Tooltip（Portal 固定定位，纯 opacity + transform） ── */
+.df-tooltip-trigger {
+  display: inline-flex;
+  align-items: center;
+}
+
+.df-sidebar .df-tooltip-trigger {
+  width: 100%;
+}
+
+.df-shell[data-layout="rail"] .df-sidebar .df-tooltip-trigger {
+  width: auto;
+}
+
+.df-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-popover);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  animation: df-fade-in var(--dur-fast) var(--ease-out);
+}
+
+.df-tooltip[data-placement="bottom"] {
+  transform: translate(-50%, 0);
+}
+
+.df-tooltip[data-placement="right"] {
+  transform: translate(0, -50%);
+}
+
+/* ── NumberStepper（精密步进器 + 快捷预设） ── */
+.df-stepper-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.df-stepper {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.df-stepper:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.df-stepper[data-disabled="true"] {
+  opacity: 0.55;
+}
+
+.df-stepper-btn {
+  width: 34px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  touch-action: manipulation;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+
+.df-stepper-btn:disabled {
+  opacity: 0.35;
+}
+
+@media (hover: hover) {
+  .df-stepper-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.df-stepper-btn:active:not(:disabled) {
+  transform: scale(var(--motion-press-scale));
+}
+
+.df-stepper-input {
+  width: 56px;
+  height: 100%;
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  background: transparent;
+  text-align: center;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  -moz-appearance: textfield;
+}
+
+.df-stepper-input::-webkit-inner-spin-button,
+.df-stepper-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.df-stepper-input:focus-visible {
+  outline: none;
+}
+
+.df-stepper-unit {
+  padding: 0 var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+.df-stepper-presets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.df-stepper-preset {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  touch-action: manipulation;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              border-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out),
+              transform var(--dur-tactile) var(--ease-out);
+}
+
+.df-stepper-preset[aria-pressed="true"] {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: var(--weight-semibold);
+}
+
+@media (hover: hover) {
+  .df-stepper-preset:hover:not(:disabled):not([aria-pressed="true"]) {
+    background: var(--bg-hover);
+    border-color: var(--border-default);
+    color: var(--text-primary);
+  }
+}
+
+.df-stepper-preset:active:not(:disabled) {
+  transform: scale(var(--motion-press-scale));
+}
+
+/* ── Toast 统一壳 ── */
+.df-toast-shell {
+  position: fixed;
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  z-index: var(--z-toast);
+  overflow: hidden;
+}
+
+.df-toast-shell[data-countdown="true"] {
+  padding-bottom: calc(var(--space-3) + 3px);
+}
+
+.df-toast-shell[data-variant="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.df-toast-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.df-toast-text {
+  line-height: var(--leading-normal);
+}
+
+.df-toast-shell .df-undo-timer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+}
+
+/* ── CommandPalette ── */
+.df-cmd {
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 460px);
+}
+
+.df-cmd-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.df-cmd-search-icon {
+  color: var(--text-tertiary);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.df-cmd-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+}
+
+.df-cmd-input:focus-visible {
+  outline: none;
+}
+
+.df-cmd-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.df-cmd-group + .df-cmd-group {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.df-cmd-group-label {
+  padding: 4px var(--space-3);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-placeholder);
+  letter-spacing: 0.04em;
+}
+
+.df-cmd-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  text-align: left;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out);
+}
+
+.df-cmd-item[data-active="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+}
+
+.df-cmd-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.df-cmd-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.df-cmd-item-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.df-cmd-item-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-cmd-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.df-cmd-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+}
+
+.df-cmd-foot > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ── ChartPopover（统计图表统一读数浮层） ── */
+.df-chart-wrap {
+  position: relative;
+}
+
+.df-chart-popover {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-popover);
+  min-width: 112px;
+  max-width: 210px;
+  transform: translate(-50%, calc(-100% - 8px));
+  animation: df-fade-in var(--dur-tactile) var(--ease-out);
+}
+
+.df-chart-popover[data-align="left"] {
+  transform: translate(0, calc(-100% - 8px));
+}
+
+.df-chart-popover[data-align="right"] {
+  transform: translate(-100%, calc(-100% - 8px));
+}
+
+.df-chart-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.df-chart-popover-swatch {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.df-chart-popover-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-chart-popover-value {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.df-chart-popover-meta {
+  margin-top: 1px;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+/* ── 时间轴 ── */
+.df-timeline-scroll {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+}
+
+.df-timeline-container {
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-8) var(--space-10);
+}
+
+.df-timeline-head {
+  flex-shrink: 0;
+  padding-block: var(--space-8) 0;
+}
+
+.df-timeline-head .df-page-title {
+  font-size: 36px;
+  line-height: 40px;
+  margin-bottom: var(--space-4);
+}
+
+.df-timeline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.df-timeline-controls .df-datelabel {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.df-timeline-full-date {
+  margin-inline-start: var(--space-2);
+  color: var(--text-tertiary);
+  font: var(--text-xs) var(--font-mono);
+}
+
+.df-timeline-controls .df-search-wrap {
+  flex: 0 1 240px;
+  min-width: 144px;
+  margin-inline-start: auto;
+}
+
+.df-day-summary {
+  margin-bottom: var(--space-6);
+}
+
+.df-day-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-4) var(--space-8);
+  margin-bottom: var(--space-4);
+}
+
+.df-day-metric-primary {
+  margin-inline-end: auto;
+}
+
+.df-day-metric dt {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  margin-bottom: var(--space-1);
+}
+
+.df-day-metric dd {
+  font: var(--weight-semibold) 20px / 28px var(--font-mono);
+}
+
+.df-day-metric-primary dd {
+  color: var(--accent-text);
+  font-size: 48px;
+  line-height: 1;
+  letter-spacing: -0.06em;
+}
+
+.df-day-metric small {
+  color: var(--text-tertiary);
+  font: var(--text-xs) var(--font-sans);
+}
+
+.df-composition-bar {
+  display: flex;
+  gap: 3px;
+  height: 6px;
+  width: 100%;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+
+.df-composition-seg {
+  height: 100%;
+  min-width: 4px;
+  border-radius: 2px;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.df-activity-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px dashed var(--border-strong);
+}
+
+.df-activity-toolbar h3 {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.df-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+@media (max-width: 639px) {
+  .df-timeline-container {
+    padding-inline: var(--space-4);
+  }
+
+  .df-timeline-head {
+    padding-top: var(--space-4);
+  }
+
+  .df-timeline-head .df-page-title {
+    font-size: 24px;
+    line-height: 32px;
+    margin-bottom: var(--space-2);
+  }
+
+  .df-timeline-controls .df-search-wrap {
+    flex-basis: 100%;
+  }
+
+  .df-timeline-controls .df-search {
+    font-size: 16px;
+  }
+
+  .df-day-metrics {
+    gap: var(--space-3) var(--space-4);
+  }
+
+  .df-day-metric-primary dd {
+    font-size: 36px;
+    line-height: 40px;
+  }
+}
+
+/* ── 统计页居中仪表盘布局 ── */
+.df-stats-period {
+  position: relative;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.df-stats-range[data-refreshing] { visibility: hidden; }
+
+.df-stats-refresh {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-stats-container {
+  max-width: 1080px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-6) var(--space-10);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+@media (max-width: 639px) {
+  .df-stats-container {
+    padding: var(--space-4);
+    gap: var(--space-4);
+  }
+}
+
+.df-goal-banner {
+  padding: var(--space-4) var(--space-5);
+}
+
+.df-goal-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.df-goal-banner-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.df-goal-banner-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.df-goal-banner-nums {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.df-goal-banner-target {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-normal);
+  font-family: var(--font-sans);
+  color: var(--text-tertiary);
+}
+
+.df-goal-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+
+.df-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.df-kpi-grid .df-value-change:not(.df-badge) {
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 900px) {
+  .df-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .df-kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.df-chart-row {
+  display: grid;
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.df-section-meta {
+  font-size: var(--text-2xs);
+  color: var(--text-placeholder);
+  font-weight: var(--weight-normal);
+}
+
+/* ── 日报页：文档纸面舞台 + 窄屏横向日期带 ── */
+.df-report-stage {
+  padding: var(--space-5) var(--space-6) var(--space-10);
+}
+
+.df-report-sheet {
+  max-width: 740px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-8);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 639px) {
+  .df-report-stage {
+    padding: 0;
+  }
+  .df-report-sheet {
+    padding: var(--space-4) var(--space-4) var(--space-8);
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
+}
+
+.df-report-doc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.df-copy-label { min-width: 4em; text-align: center; }
+
+.df-report-ai-surface {
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+}
+
+.df-report-ai-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.df-split[data-stacked="true"] .df-split-aside {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: none;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-surface);
+}
+
+.df-split[data-stacked="true"] .df-split-aside .df-report-date {
+  width: auto;
+  flex-shrink: 0;
+  min-height: 34px;
+  padding: 4px var(--space-3);
+}
+
+/* ── 设置页：居中容器 + 顶部锚点快跳 ── */
+.df-settings-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.df-settings-container {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-6) var(--space-10);
+}
+
+@media (max-width: 639px) {
+  .df-settings-container {
+    padding: var(--space-4);
+  }
+}
+
+.df-settings-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+
+.df-settings-nav-item {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  transition: background-color var(--dur-tactile) var(--ease-out),
+              color var(--dur-tactile) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .df-settings-nav-item:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+  }
+}
+
+/* ── 诊断日志等宽终端面 ── */
+.df-log-console {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Preserve the meaning of busy and undo with static state cues. */
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) {
@@ -1241,7 +2687,9 @@ h4 { font-size: var(--text-md); }
     --motion-panel-scale: 1;
     --motion-press-scale: 1;
     --dur-tactile: 0ms;
+    --dur-fast: 0ms;
     --dur-base: 0ms;
+    --dur-spatial: 0ms;
     --dur-space: 0ms;
     --dur-menu: 0ms;
     --dur-exit: 0ms;
@@ -1249,8 +2697,14 @@ h4 { font-size: var(--text-md); }
     --dur-page: 80ms;
     --dur-handoff: 80ms;
   }
-  :root:not([data-motion="full"]) .df-spin { animation: none; }
+  :root:not([data-motion="full"]) .df-spin,
+  :root:not([data-motion="full"]) .df-tooltip,
+  :root:not([data-motion="full"]) .df-chart-popover { animation: none; }
+  :root:not([data-motion="full"]) .df-button-label[data-hidden] { opacity: 0.62; }
+  :root:not([data-motion="full"]) .df-busy-spinner { display: none; }
+  :root:not([data-motion="full"]) .df-row { translate: none !important; }
   :root:not([data-motion="full"]) .df-undo-timer { display: none; }
+  :root:not([data-motion="full"]) .df-undo-reduced-hint { display: inline; color: var(--text-tertiary); }
 }
 
 :root[data-motion="reduced"] {
@@ -1258,7 +2712,9 @@ h4 { font-size: var(--text-md); }
   --motion-panel-scale: 1;
   --motion-press-scale: 1;
   --dur-tactile: 0ms;
+  --dur-fast: 0ms;
   --dur-base: 0ms;
+  --dur-spatial: 0ms;
   --dur-space: 0ms;
   --dur-menu: 0ms;
   --dur-exit: 0ms;
@@ -1267,5 +2723,11 @@ h4 { font-size: var(--text-md); }
   --dur-handoff: 80ms;
 }
 
-[data-motion="reduced"] .df-spin { animation: none; }
+[data-motion="reduced"] .df-spin,
+[data-motion="reduced"] .df-tooltip,
+[data-motion="reduced"] .df-chart-popover { animation: none; }
+[data-motion="reduced"] .df-button-label[data-hidden] { opacity: 0.62; }
+[data-motion="reduced"] .df-busy-spinner { display: none; }
+[data-motion="reduced"] .df-row { translate: none !important; }
 [data-motion="reduced"] .df-undo-timer { display: none; }
+[data-motion="reduced"] .df-undo-reduced-hint { display: inline; color: var(--text-tertiary); }

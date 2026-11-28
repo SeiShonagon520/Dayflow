@@ -4,6 +4,7 @@ Dayflow - 日志轮转管理器
 """
 import logging
 import os
+import sys
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -72,8 +73,13 @@ class LogManager:
         root_logger = logging.getLogger()
         root_logger.setLevel(self.log_level)
         
-        # 清除现有处理器
-        root_logger.handlers.clear()
+        # 先显式关闭再移除旧处理器，避免 Windows 上泄漏已打开的日志文件句柄
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
         
         # 日志格式
         log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -84,10 +90,14 @@ class LogManager:
         self._file_handler.setFormatter(formatter)
         root_logger.addHandler(self._file_handler)
         
-        # 创建控制台处理器
-        self._console_handler = logging.StreamHandler()
-        self._console_handler.setFormatter(formatter)
-        root_logger.addHandler(self._console_handler)
+        # 仅在 stderr 有效且未重定向到 devnull 时挂载控制台处理器
+        stderr_name = getattr(sys.stderr, "name", None)
+        if sys.stderr is not None and stderr_name != os.devnull:
+            self._console_handler = logging.StreamHandler()
+            self._console_handler.setFormatter(formatter)
+            root_logger.addHandler(self._console_handler)
+        else:
+            self._console_handler = None
         
         # 降低第三方库日志级别
         logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -161,72 +171,15 @@ class LogManager:
         
         return deleted_count
     
-    def get_log_files(self) -> list:
-        """
-        获取所有日志文件列表
-        
-        Returns:
-            日志文件路径列表，按修改时间排序（最新在前）
-        """
-        log_files = []
-        
-        try:
-            for file_path in self.log_dir.iterdir():
-                if not file_path.is_file():
-                    continue
-                
-                if not file_path.name.startswith(self.log_filename.replace('.log', '')):
-                    continue
-                
-                if '.log' in file_path.name:
-                    log_files.append(file_path)
-            
-            # 按修改时间排序（最新在前）
-            log_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        
-        except Exception as e:
-            logger.error(f"获取日志文件列表失败: {e}")
-        
-        return log_files
-    
-    def get_total_log_size(self) -> int:
-        """
-        获取所有日志文件的总大小
-        
-        Returns:
-            总大小（字节）
-        """
-        total_size = 0
-        for file_path in self.get_log_files():
-            try:
-                total_size += file_path.stat().st_size
-            except OSError:
-                pass
-        return total_size
-    
-    def force_rotate(self) -> bool:
-        """
-        强制执行日志轮转
-        
-        Returns:
-            是否成功
-        """
-        if self._file_handler:
-            try:
-                self._file_handler.doRollover()
-                logger.info("已强制执行日志轮转")
-                return True
-            except Exception as e:
-                logger.error(f"强制日志轮转失败: {e}")
-                return False
-        return False
-    
     def close(self) -> None:
-        """关闭日志处理器"""
+        """从根日志器解绑并关闭日志处理器"""
+        root_logger = logging.getLogger()
         if self._file_handler:
+            root_logger.removeHandler(self._file_handler)
             self._file_handler.close()
             self._file_handler = None
         
         if self._console_handler:
+            root_logger.removeHandler(self._console_handler)
             self._console_handler.close()
             self._console_handler = None

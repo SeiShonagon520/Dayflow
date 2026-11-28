@@ -53,7 +53,7 @@ Dayflow 的设计原则是：**本地录制 + 云端分析 + 本地存储**。
    原始录屏切片保存在本地，不会整段上传到云端。
 
 2. **仅发送有限关键帧用于分析**  
-   程序会从切片中提取少量关键帧（README 当前说明为每个切片最多 8 帧）发送给你配置的视觉模型服务。
+   截图分析会优先保留窗口切换附近的画面，每个切片最多向所配置的模型发送 4 帧。本机计时只保存应用名和用时。
 
 3. **分析结果保存在本地**  
    活动记录、设置项、统计数据保存在本地 SQLite 数据库中。
@@ -97,35 +97,37 @@ Dayflow 的设计原则是：**本地录制 + 云端分析 + 本地存储**。
 | ⏸️ **智能暂停录制** | 手动暂停 + 空闲自动暂停，保护隐私与节省资源 |
 | 🎨 **主题切换** | 支持暗色 / 亮色主题，自动保存偏好 |
 
-## v1.7.1
+## v1.8.0
 
 Dayflow Windows 版使用 Tauri + React。安装新版后会继续读取 `%LOCALAPPDATA%\Dayflow\dayflow.db`，已有的活动、日报和设置可直接使用。旧版 JSON 备份可以从「设置 → 数据导入与导出」合并。
 
 | 任务 | 入口 |
 | --- | --- |
-| 开始、暂停、继续、停止录制 | 主界面或系统托盘 |
-| 选择显示器、空闲设置、切片目录和容量 | 设置 → 录制 |
+| 开始、暂停、继续、停止记录 | 主界面或系统托盘 |
+| 切换本机计时与截图分析 | 设置 → 活动记录 |
+| 查看本机总结、核对活动与补充日报 | 日报 |
+| 选择显示器、空闲设置、切片目录和容量 | 设置 → 活动记录 |
 | 定时发送日报和发送测试邮件 | 设置 → 邮件日报 |
 | 导出 HTML、CSV、JSON 或合并数据 | 设置 → 数据导入与导出 |
-| 登录后自动在托盘启动并开始录制 | 设置 → 系统 |
+| 登录后自动在托盘启动并开始记录 | 设置 → 系统 |
 | 下载、校验并安装更新 | 设置 → 系统 |
 | 查阅日志并打开日志目录 | 设置 → 诊断日志 |
 
 ### 安装
 
-从 [GitHub Releases](https://github.com/SeiShonagon520/Dayflow/releases) 下载最新的 `Dayflow_<版本>_x64-setup.exe`。支持 Windows 10/11 x64。首次启动时，在设置中填写视觉模型接口和模型名称。登录自启沿用已设置的 Dayflow 启动项。
+从 [GitHub Releases](https://github.com/SeiShonagon520/Dayflow/releases) 下载最新的 `Dayflow_<版本>_x64-setup.exe`。支持 Windows 10/11 x64。首次打开即可开始本机计时。需要截图分析或 AI 补充日报时，可在设置中配置模型，识图测试使用生成的样图。登录自启沿用已设置的 Dayflow 启动项。
 
 ### 开发和构建
 
 需要 Node.js 22、Rust stable（MSVC）、Visual Studio C++ Build Tools、Windows SDK、Python 3.10 或 3.11。
 
 ```powershell
-python -m pip install -r requirements.txt -r bridge/requirements.txt pyinstaller
+python -m pip install -r requirements.txt -r requirements-dev.txt -r bridge/requirements.txt pyinstaller
 npm ci
 .\start.bat
 ```
 
-运行 `python -m pytest -q` 检查后端和前端自检，运行 `npm run build` 检查 TypeScript 和前端产物。运行 `.\build.bat` 会重新构建 Python sidecar 和 Windows NSIS 安装包。
+运行 `python -m pytest -q` 检查后端逻辑，运行 `npm run lint && npm test && npm run build` 检查 React Hooks、前端组件测试、TypeScript 与前端产物。运行 `.\build.bat` 会重新构建 Python sidecar 和 Windows NSIS 安装包。
 
 安装包位于 `src-tauri\target\release\bundle\nsis\`。发布时将对应版本的 `Dayflow_<版本>_x64-setup.exe` 附到对应 GitHub Release。Windows CI 在测试通过后构建同一份安装包。
 
@@ -156,7 +158,7 @@ npm ci
 
 ## 📄 许可证
 
-[CC BY-NC-SA 4.0](LICENSE) © 2024-2025
+[CC BY-NC-SA 4.0](LICENSE) © 2024-2026
 
 本项目采用 **知识共享 署名-非商业性使用-相同方式共享 4.0** 协议。
 - ✅ 可自由学习、修改、分享

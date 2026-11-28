@@ -40,8 +40,3 @@ export function useIsNarrow(): boolean {
 export function useIsPhone(): boolean {
   return useMQ(`(max-width: ${BP_BOTTOM - 1}px)`);
 }
-
-/** 指针是否真的能悬停。触屏设备上 hover 态不能是唯一入口。 */
-export function useHasHover(): boolean {
-  return useMQ("(hover: hover) and (pointer: fine)");
-}

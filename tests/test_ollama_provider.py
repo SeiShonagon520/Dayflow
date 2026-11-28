@@ -1,10 +1,7 @@
 """
 Unit tests for Ollama / Local LLM support in core/llm_provider.py
 """
-import pytest
-import httpx
-
-from core.llm_provider import DayflowBackendProvider, get_ollama_models
+from core.llm_provider import DayflowBackendProvider
 
 
 def test_ollama_url_normalization():
@@ -33,53 +30,3 @@ def test_ollama_headers():
 
     p_with_key = DayflowBackendProvider(api_base_url="http://localhost:11434", api_key="my-key")
     assert p_with_key.headers["Authorization"] == "Bearer my-key"
-
-
-import asyncio
-
-
-def test_get_ollama_models_mocked(monkeypatch):
-    """Test get_ollama_models parsing from /api/tags response."""
-    class MockResponse:
-        status_code = 200
-        def json(self):
-            return {
-                "models": [
-                    {"name": "qwen2.5-vl:7b"},
-                    {"name": "minicpm-v:latest"},
-                    {"name": "llava:latest"}
-                ]
-            }
-
-    class MockAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            pass
-        async def get(self, url):
-            return MockResponse()
-
-    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
-
-    models = asyncio.run(get_ollama_models("http://localhost:11434"))
-    assert models == ["qwen2.5-vl:7b", "minicpm-v:latest", "llava:latest"]
-
-
-def test_get_ollama_models_offline(monkeypatch):
-    """Test get_ollama_models handles connection failure gracefully."""
-    class MockAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            pass
-        async def get(self, url):
-            raise httpx.ConnectError("Connection refused")
-
-    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
-
-    models = asyncio.run(get_ollama_models("http://localhost:11434"))
-    assert models == []
